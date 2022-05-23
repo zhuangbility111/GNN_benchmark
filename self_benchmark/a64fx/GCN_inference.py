@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 import time
+import pdb
 
 
 dataset = Planetoid(root='../data/Cora', name='Cora')
@@ -41,6 +42,7 @@ model.eval()
 # Warm-up
 for _ in range(5):
     start = time.time()
+    pdb.set_trace()
     outputs = model(data)
     end = time.time()
     print('Time:{}ms'.format((end-start)*1000))

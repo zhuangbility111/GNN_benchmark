@@ -30,8 +30,9 @@ class Net(torch.nn.Module):
         x = self.conv2(x, edge_index)
         return F.log_softmax(x, dim=-1)
 
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.cuda.set_device(5)
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda')
 model = Net(dataset.num_features, dataset.num_classes).to(device)
 data = data.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
@@ -56,8 +57,13 @@ def test(data):
     return accs
 
 
-for epoch in range(1, 201):
-    train(data)
-    train_acc, val_acc, test_acc = test(data)
-    print(f'Epoch: {epoch:03d}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
-          f'Test: {test_acc:.4f}')
+with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False, with_stack=True) as prof:
+    for epoch in range(1, 201):
+        train(data)
+        train_acc, val_acc, test_acc = test(data)
+        print(f'Epoch: {epoch:03d}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
+            f'Test: {test_acc:.4f}')
+# print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
+print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+
+torch.save(model.state_dict(), 'GATNet.pt')
