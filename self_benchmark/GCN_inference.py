@@ -5,7 +5,7 @@ from torch_geometric.nn import GCNConv
 import time
 
 
-dataset = Planetoid(root='/tmp/Cora', name='Cora')
+dataset = Planetoid(root='../data/Cora', name='Cora')
 print(dataset.data)
 print('Number of classes:', dataset.num_classes)
 print('Number of edges features:', dataset.num_edge_features)
@@ -45,10 +45,10 @@ for _ in range(5):
     end = time.time()
     print('Time:{}ms'.format((end-start)*1000))
 
-with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=False, with_stack=True) as prof:
-    for _ in range(100):
-        outputs = model(data)
-print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
+# with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=False, with_stack=True) as prof:
+for _ in range(100):
+    outputs = model(data)
+# print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
 
 # ------------------------------------
 # import torchvision.models as models
