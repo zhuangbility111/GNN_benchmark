@@ -7,11 +7,14 @@ import torch_geometric.transforms as T
 from torch_geometric.datasets import Planetoid
 from torch_geometric.nn import GATConv
 
+from torch_sparse import SparseTensor
+
 import time
 
 dataset = 'Cora'
 # path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', dataset)
-dataset = Planetoid("../../data/Cora", dataset, transform=T.NormalizeFeatures())
+# dataset = Planetoid("../../data/Cora", dataset, transform=T.NormalizeFeatures())
+dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
 data = dataset[0]
 print('Number of threads:', torch.get_num_threads())
 
@@ -25,11 +28,11 @@ class Net(torch.nn.Module):
         self.conv2 = GATConv(8 * 8, out_channels, heads=1, concat=False,
                              dropout=0.6)
 
-    def forward(self, x, edge_index):
+    def forward(self, x, adj_t):
         x = F.dropout(x, p=0.6, training=self.training)
-        x = F.elu(self.conv1(x, edge_index))
+        x = F.elu(self.conv1(x, adj_t))
         x = F.dropout(x, p=0.6, training=self.training)
-        x = self.conv2(x, edge_index)
+        x = self.conv2(x, adj_t)
         return F.log_softmax(x, dim=-1)
 
 def train(data, model, optimizer):
@@ -42,7 +45,7 @@ def train(data, model, optimizer):
         print('epoch:', epoch)
         optimizer.zero_grad()
         forward_start = time.perf_counter()
-        out = model(data.x, data.edge_index)
+        out = model(data.x, data.adj_t)
         backward_start = time.perf_counter()
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         loss.backward()
@@ -58,7 +61,7 @@ def train(data, model, optimizer):
 @torch.no_grad()
 def test(data):
     model.eval()
-    out, accs = model(data.x, data.edge_index), []
+    out, accs = model(data.x, data.adj_t), []
     for _, mask in data('train_mask', 'val_mask', 'test_mask'):
         acc = float((out[mask].argmax(-1) == data.y[mask]).sum() / mask.sum())
         accs.append(acc)
@@ -78,11 +81,11 @@ def run_model_without_profiler(data, model, optimizer):
     print("forward_time(ms), {}".format(total_forward_dur * 1000))
     print("backward_time(ms), {}".format(total_backward_dur * 1000))
     print("update_weight_time(ms), {}".format(total_update_weight_dur * 1000))
-    
 
-    train_acc, val_acc, test_acc = test(data)
-    print(f'Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
-    # print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
+    # train_acc, val_acc, test_acc = test(data)
+    # print(f'Epoch: {epoch:03d}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
+    #     f'Test: {test_acc:.4f}')
+# print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
 
 start = time.perf_counter()
 device = torch.device('cpu')

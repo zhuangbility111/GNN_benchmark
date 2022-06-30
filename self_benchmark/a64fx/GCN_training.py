@@ -3,8 +3,9 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 import time
 from torch_geometric.datasets import Planetoid
+import pdb
 
-dataset = Planetoid(root='../data/Cora', name='Cora')
+dataset = Planetoid(root='../../data/Cora', name='Cora')
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
 print('Number of classes:', dataset.num_classes)
@@ -84,8 +85,8 @@ def run_model_without_profiler(dataset):
     model.eval()
     # with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=False, with_stack=True) as prof:
     for _ in range(100):
-        # pred = model(data).argmax(dim=1)
-        pred = model(data)
+        pred = model(data).argmax(dim=1)
+        # pred = model(data)
     # print(prof.key_averages().table(sort_by="self_cpu_time_total"))
     correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
     acc = int(correct) / int(data.test_mask.sum())
@@ -136,8 +137,8 @@ def run_model_with_profiler(dataset):
     model.eval()
     # with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=False, with_stack=True) as prof:
     for _ in range(100):
-        # pred = model(data).argmax(dim=1)
-        pred = model(data)
+        pred = model(data).argmax(dim=1)
+        # pred = model(data)
     # print(prof.key_averages().table(sort_by="self_cpu_time_total"))
     correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
     acc = int(correct) / int(data.test_mask.sum())
@@ -146,4 +147,5 @@ def run_model_with_profiler(dataset):
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
 
 
-run_model_without_profiler(dataset)
+# run_model_without_profiler(dataset)
+run_model_with_profiler(dataset)

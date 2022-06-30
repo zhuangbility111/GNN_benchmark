@@ -7,7 +7,7 @@ import time
 from torch_geometric.datasets import Planetoid
 # import pdb
 
-dataset = Planetoid(root='../data/Cora', name='Cora', transform=T.ToSparseTensor())
+dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
 print('Number of classes:', dataset.num_classes)
