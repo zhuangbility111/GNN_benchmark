@@ -11,7 +11,7 @@ torch.cuda.set_device(4)
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-dataset = Planetoid(root='../data/Cora', name='Cora', transform=T.ToSparseTensor())
+dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
 # dataset = Planetoid(root='../data/Cora', name='Cora')
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
@@ -112,7 +112,7 @@ def run_model_without_profiler(dataset):
 '''
 
 def run_model_with_profiler(dataset):
-    torch.cuda.set_device(2)
+    torch.cuda.set_device(4)
     print("num of gpu:{}".format(torch.cuda.device_count()))
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     device = torch.device('cuda')
@@ -137,14 +137,17 @@ def run_model_with_profiler(dataset):
             optimizer.zero_grad()
             # torch.cuda.synchronize()
             # forward_start = time.perf_counter()
-            out = model(data.x, data.adj_t)
+            with torch.autograd.profiler.record_function("Forward"):
+                out = model(data.x, data.adj_t)
             # torch.cuda.synchronize()
             # backward_start = time.perf_counter()
-            loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
-            loss.backward()
+            with torch.autograd.profiler.record_function("Backward"):
+                loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+                loss.backward()
             # torch.cuda.synchronize()
             # update_weight_start = time.perf_counter()
-            optimizer.step()
+            with torch.autograd.profiler.record_function("Update weights"):
+                optimizer.step()
             # torch.cuda.synchronize()
             # update_weight_end = time.perf_counter()
             # total_forward_dur += backward_start - forward_start
@@ -177,4 +180,5 @@ def run_model_with_profiler(dataset):
 
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
 
-run_model_without_profiler(dataset)
+# run_model_without_profiler(dataset)
+run_model_with_profiler(dataset)

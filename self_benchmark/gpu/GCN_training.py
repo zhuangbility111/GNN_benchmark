@@ -5,11 +5,11 @@ from torch_geometric.nn import GCNConv
 import time
 # import pdb
 
-torch.cuda.set_device(4)
+torch.cuda.set_device(0)
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
-dataset = Planetoid(root='../data/Cora', name='Cora')
+dataset = Planetoid(root='../../data/Cora', name='Cora')
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
 print('Number of classes:', dataset.num_classes)
@@ -47,14 +47,31 @@ def run_model_without_profiler(dataset):
     total_update_weight_dur = 0
     total_load_data_and_model_dur = 0
     dur = 0
+    device = torch.device('cuda')
+    load_start = time.perf_counter()
+    model = GCN().to(device)
+    data = dataset[0].to(device)
+    total_load_data_and_model_dur += time.perf_counter() - load_start
+    '''
+    # warm up
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+    train_loss_all = []
+    val_loss_all = []
+    model.train()
+    for epoch in range(200):
+        print('=' * 100)
+        print('epoch:', epoch)
+        optimizer.zero_grad()
+        out = model(data)
+        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+        loss.backward()
+        optimizer.step()
+    '''
     repeat_round = 1
+    dur += repeat_round * total_load_data_and_model_dur
     for _ in range(repeat_round):
         start = time.perf_counter()
         device = torch.device('cuda')
-        load_start = time.perf_counter()
-        model = GCN().to(device)
-        data = dataset[0].to(device)
-        total_load_data_and_model_dur += time.perf_counter() - load_start
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
         train_loss_all = []
         val_loss_all = []

@@ -7,11 +7,15 @@ import torch_geometric.transforms as T
 from torch_geometric.datasets import Planetoid
 from torch_geometric.nn import GATConv
 
-dataset = 'Cora'
-#path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', dataset)
-dataset = Planetoid("../data/Cora", dataset, transform=T.NormalizeFeatures())
-data = dataset[0]
+import time
 
+dataset = 'Cora'
+# path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', dataset)
+dataset = Planetoid("../../data/Cora", dataset, transform=T.NormalizeFeatures())
+data = dataset[0]
+torch.cuda.set_device(5)
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 class Net(torch.nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -29,21 +33,31 @@ class Net(torch.nn.Module):
         x = self.conv2(x, edge_index)
         return F.log_softmax(x, dim=-1)
 
-torch.cuda.set_device(5)
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cuda')
-model = Net(dataset.num_features, dataset.num_classes).to(device)
-data = data.to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
-
-
-def train(data):
+def train(data, model, optimizer):
+    total_forward_dur = 0
+    total_backward_dur = 0
+    total_update_weight_dur = 0
     model.train()
-    optimizer.zero_grad()
-    out = model(data.x, data.edge_index)
-    loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
-    loss.backward()
-    optimizer.step()
+    for epoch in range(200):
+        print('=' * 100)
+        print('epoch:', epoch)
+        optimizer.zero_grad()
+        torch.cuda.synchronize()
+        forward_start = time.perf_counter()
+        out = model(data.x, data.edge_index)
+        torch.cuda.synchronize()
+        backward_start = time.perf_counter()
+        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+        loss.backward()
+        torch.cuda.synchronize()
+        update_weight_start = time.perf_counter()
+        optimizer.step()
+        torch.cuda.synchronize()
+        update_weight_end = time.perf_counter()
+        total_forward_dur += backward_start - forward_start
+        total_backward_dur += update_weight_start - backward_start
+        total_update_weight_dur += update_weight_end - update_weight_start
+    return total_forward_dur, total_backward_dur, total_update_weight_dur
 
 
 @torch.no_grad()
@@ -56,13 +70,39 @@ def test(data):
     return accs
 
 
-with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False, with_stack=True) as prof:
-    for epoch in range(1, 201):
-        train(data)
-        train_acc, val_acc, test_acc = test(data)
-        print(f'Epoch: {epoch:03d}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
-            f'Test: {test_acc:.4f}')
-# print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
-print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+def run_model_with_profiler(data, model, optimizer):
+    with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False, with_stack=False) as prof:
+        train(data, model, optimizer)
+    print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+    torch.save(model.state_dict(), 'GATNet.pt')
 
-torch.save(model.state_dict(), 'GATNet.pt')
+
+def run_model_without_profiler(data, model, optimizer):
+    total_forward_dur, total_backward_dur, total_update_weight_dur = train(data, model, optimizer)
+    torch.save(model.state_dict(), 'GATNet.pt')
+    print("forward_time(ms), {}".format(total_forward_dur * 1000))
+    print("backward_time(ms), {}".format(total_backward_dur * 1000))
+    print("update_weight_time(ms), {}".format(total_update_weight_dur * 1000))
+
+    # train_acc, val_acc, test_acc = test(data)
+    # print(f'Epoch: {epoch:03d}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
+    #     f'Test: {test_acc:.4f}')
+# print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total"))
+
+start = time.perf_counter()
+device = torch.device('cuda')
+
+load_start = time.perf_counter()
+model = Net(dataset.num_features, dataset.num_classes).to(device)
+data = data.to(device)
+# torch.cuda.synchronize()
+total_load_data_and_model_dur = time.perf_counter() - load_start
+
+optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
+
+# run_model_with_profiler(data, model, optimizer)
+run_model_without_profiler(data, model, optimizer)
+torch.cuda.synchronize()
+end = time.perf_counter()
+print("load_data_and_model_time(ms), {}".format(total_load_data_and_model_dur * 1000))
+print("total_training_time(ms), {}".format((end - start) * 1000))
