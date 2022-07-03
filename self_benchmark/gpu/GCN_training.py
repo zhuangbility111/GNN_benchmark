@@ -39,24 +39,7 @@ class GCN(torch.nn.Module):
 	
         return F.log_softmax(x, dim=1)
 
-def run_model_without_profiler(dataset):
-    print("num of gpu:{}".format(torch.cuda.device_count()))
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    total_forward_dur = 0
-    total_backward_dur = 0
-    total_update_weight_dur = 0
-    total_load_data_and_model_dur = 0
-    dur = 0
-    device = torch.device('cuda')
-    load_start = time.perf_counter()
-    model = GCN().to(device)
-    data = dataset[0].to(device)
-    total_load_data_and_model_dur += time.perf_counter() - load_start
-    '''
-    # warm up
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
-    train_loss_all = []
-    val_loss_all = []
+def train(data, model, optimizer):
     model.train()
     for epoch in range(200):
         print('=' * 100)
@@ -66,56 +49,99 @@ def run_model_without_profiler(dataset):
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         loss.backward()
         optimizer.step()
-    '''
-    repeat_round = 1
-    dur += repeat_round * total_load_data_and_model_dur
+
+def train_with_instrumentation(data, model, optimizer):
+    model.train()
+    total_forward_dur = 0
+    total_backward_dur = 0
+    total_update_weight_dur = 0
+    for epoch in range(200):
+        print('=' * 100)
+        print('epoch:', epoch)
+        optimizer.zero_grad()
+        torch.cuda.synchronize()
+        forward_start = time.perf_counter()
+        out = model(data)
+        torch.cuda.synchronize()
+        backward_start = time.perf_counter()
+        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+        loss.backward()
+        torch.cuda.synchronize()
+        update_weight_start = time.perf_counter()
+        optimizer.step()
+        torch.cuda.synchronize()
+        update_weight_end = time.perf_counter()
+        total_forward_dur += backward_start - forward_start
+        total_backward_dur += update_weight_start - backward_start
+        total_update_weight_dur += update_weight_end - update_weight_start
+    return total_forward_dur, total_backward_dur, total_update_weight_dur
+	
+
+def run_model_without_profiler(dataset):
+    print("num of gpu:{}".format(torch.cuda.device_count()))
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    total_forward_dur = 0
+    total_backward_dur = 0
+    total_update_weight_dur = 0
+    total_load_data_and_model_dur = 0
+    dur = 0
+    
+    # warm up
+    device = torch.device('cuda')
+    model = GCN().to(device)
+    data = dataset[0].to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+    train_loss_all = []
+    val_loss_all = []
+    train_with_instrumentation(data, model, optimizer)
+
+    print("warmup over.")
+    
+    repeat_round = 10
     for _ in range(repeat_round):
         start = time.perf_counter()
         device = torch.device('cuda')
+        load_start = time.perf_counter()
+        model = GCN().to(device)
+        data = dataset[0].to(device)
+        total_load_data_and_model_dur += time.perf_counter() - load_start
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
         train_loss_all = []
         val_loss_all = []
-        model.train()
-        for epoch in range(200):
-            print('=' * 100)
-            print('epoch:', epoch)
-            optimizer.zero_grad()
-            torch.cuda.synchronize()
-            forward_start = time.perf_counter()
-            out = model(data)
-            torch.cuda.synchronize()
-            backward_start = time.perf_counter()
-            loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
-            loss.backward()
-            torch.cuda.synchronize()
-            update_weight_start = time.perf_counter()
-            optimizer.step()
-            torch.cuda.synchronize()
-            update_weight_end = time.perf_counter()
-            total_forward_dur += backward_start - forward_start
-            total_backward_dur += update_weight_start - backward_start
-            total_update_weight_dur += update_weight_end - update_weight_start
+        forward_dur, backward_dur, update_weight_dur = train_with_instrumentation(data, model, optimizer)
         torch.cuda.synchronize()
         end = time.perf_counter()
+        total_forward_dur += forward_dur
+        total_backward_dur += backward_dur
+        total_update_weight_dur += update_weight_dur
         dur += end - start
-    print("total_training_time(ms): {}:".format(dur * 1000 / repeat_round))
     print("load_data_and_model_time(ms): {}".format(total_load_data_and_model_dur * 1000 / repeat_round))
     print("forward_time(ms): {}".format(total_forward_dur * 1000 / repeat_round))
     print("backward_time(ms): {}".format(total_backward_dur * 1000 / repeat_round))
     print("update_weight_time(ms): {}".format(total_update_weight_dur * 1000 / repeat_round))
-'''
-        model.eval()
-        pred = model(data).argmax(dim=1)
-        correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
-        acc = int(correct) / int(data.test_mask.sum())
-        print(f'Accuracy: {acc:.4f}')
+    print("total_training_time(ms): {}".format(dur * 1000 / repeat_round))
+
+    model.eval()
+    pred = model(data).argmax(dim=1)
+    correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
+    acc = int(correct) / int(data.test_mask.sum())
+    print(f'Accuracy: {acc:.4f}')
         
-        torch.save(model.state_dict(), 'GCNNet_v0.pt')
-'''
+    torch.save(model.state_dict(), 'GCNNet_v0.pt')
+
 def run_model_with_profiler(dataset):
-    torch.cuda.set_device(2)
-    print("num of gpu:{}".format(torch.cuda.device_count()))
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	
+    # warm up
+    device = torch.device('cuda')
+    model = GCN().to(device)
+    data = dataset[0].to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+    train_loss_all = []
+    val_loss_all = []
+    train(data, model, optimizer)
+
+    print("warmup over.")
+
     device = torch.device('cuda')
     print(device)
     model = GCN().to(device)
@@ -123,32 +149,10 @@ def run_model_with_profiler(dataset):
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
     train_loss_all = []
     val_loss_all = []
-    total_forward_dur = 0
-    total_backward_dur = 0
-    total_update_weight_dur = 0
     
     with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False, with_stack=False) as prof:
         start = time.perf_counter()
-        model.train()
-        for epoch in range(200):
-            print('=' * 100)
-            print('epoch:', epoch)
-            optimizer.zero_grad()
-            # torch.cuda.synchronize()
-            # forward_start = time.perf_counter()
-            out = model(data)
-            # torch.cuda.synchronize()
-            # backward_start = time.perf_counter()
-            loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
-            loss.backward()
-            # torch.cuda.synchronize()
-            # update_weight_start = time.perf_counter()
-            optimizer.step()
-            # torch.cuda.synchronize()
-            # update_weight_end = time.perf_counter()
-            # total_forward_dur += backward_start - forward_start
-            # total_backward_dur += update_weight_start - backward_start
-            # total_update_weight_dur += update_weight_end - update_weight_start
+        train(data, model, optimizer)
         torch.cuda.synchronize()
         end = time.perf_counter()
         dur = end - start
