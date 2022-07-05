@@ -158,13 +158,15 @@ def run_model_without_profiler():
         load_start = time.perf_counter()
         model = Net(dataset.num_features, dataset.num_classes).to(device)
         data = dataset[0].to(device)
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         load_data_dur = time.perf_counter() - load_start
         total_load_data_and_model_dur += load_data_dur
         # print("=======repeat round " + str(i) + " ========")
         optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
         forward_dur, backward_dur, update_weight_dur = train_with_instrumentation(data, model, optimizer)
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         end = time.perf_counter()
         total_forward_dur += forward_dur
         total_backward_dur += backward_dur
