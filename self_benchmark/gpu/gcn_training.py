@@ -2,14 +2,35 @@ from torch_geometric.datasets import Planetoid
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
+from torch_sparse import SparseTensor
+import torch_geometric.transforms as T
 import time
+import argparse
 # import pdb
 
-torch.cuda.set_device(0)
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
+parser = argparse.ArgumentParser()
+parser.add_argument('--tensor_type', type=str, default='tensor', help='The type of Tensor: \'tensor\' or \'sparse_tensor\'')
+parser.add_argument('--use_profiler', type=str, default='false', help='Use profiler: \'false\' or \'true\'')
+args = parser.parse_args()
+tensor_type = args.tensor_type
+use_profiler = args.use_profiler
 
-dataset = Planetoid(root='../../data/Cora', name='Cora')
+if torch.cuda.is_available():
+    print("GPU version")
+    print("CUDA version:" + torch.version.cuda)
+    torch.cuda.set_device(0)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+else:
+    print("CPU version")
+
+if tensor_type == 'tensor':
+    print('tensor_type: Tensor')
+    dataset = Planetoid(root='../../data/Cora', name='Cora')
+elif tensor_type == 'sparse_tensor':
+    print('tensor_type: SparseTensor')
+    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
+
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
 print('Number of classes:', dataset.num_classes)
@@ -18,8 +39,7 @@ print('Number of edges index:', dataset.data.edge_index.shape[1] / 2)
 print('Number of nodes features：', dataset.num_node_features)
 print('Number of nodes:', dataset.data.x.shape[0])
 # print(':', dataset.data.x)
-
-print(dataset.data.edge_index)
+# print(dataset.data.edge_index)
 
 class GCN(torch.nn.Module):
     def __init__(self):
@@ -29,14 +49,13 @@ class GCN(torch.nn.Module):
         self.conv1 = GCNConv(dataset.num_node_features, dataset.num_node_features)
         self.conv2 = GCNConv(dataset.num_node_features, dataset.num_classes)
 
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-
-        x = self.conv1(x, edge_index)
+    # forward() for tensor
+    def forward(self, x, edge):
+        # x, edge_index = data.x, data.edge_index
+        x = self.conv1(x, edge)
         x = F.relu(x)
         x = F.dropout(x, training=self.training)
-        x = self.conv2(x, edge_index)
-	
+        x = self.conv2(x, edge)
         return F.log_softmax(x, dim=1)
 
 def train(data, model, optimizer):
@@ -45,7 +64,10 @@ def train(data, model, optimizer):
         print('=' * 100)
         print('epoch:', epoch)
         optimizer.zero_grad()
-        out = model(data)
+        if tensor_type == 'tensor':
+            out = model(data.x, data.edge_index)
+        elif tensor_type == 'sparse_tensor':
+            out = model(data.x, data.adj_t)
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         loss.backward()
         optimizer.step()
@@ -61,7 +83,11 @@ def train_with_instrumentation(data, model, optimizer):
         optimizer.zero_grad()
         torch.cuda.synchronize()
         forward_start = time.perf_counter()
-        out = model(data)
+        # out = model(data)
+        if tensor_type == 'tensor':
+            out = model(data.x, data.edge_index)
+        elif tensor_type == 'sparse_tensor':
+            out = model(data.x, data.adj_t)
         torch.cuda.synchronize()
         backward_start = time.perf_counter()
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
@@ -77,9 +103,7 @@ def train_with_instrumentation(data, model, optimizer):
     return total_forward_dur, total_backward_dur, total_update_weight_dur
 	
 
-def run_model_without_profiler(dataset):
-    print("num of gpu:{}".format(torch.cuda.device_count()))
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+def run_model_without_profiler():
     total_forward_dur = 0
     total_backward_dur = 0
     total_update_weight_dur = 0
@@ -87,7 +111,8 @@ def run_model_without_profiler(dataset):
     dur = 0
     
     # warm up
-    device = torch.device('cuda')
+    # device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = GCN().to(device)
     data = dataset[0].to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
@@ -100,10 +125,12 @@ def run_model_without_profiler(dataset):
     repeat_round = 10
     for _ in range(repeat_round):
         start = time.perf_counter()
-        device = torch.device('cuda')
+        # device = torch.device('cuda')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         load_start = time.perf_counter()
         model = GCN().to(device)
         data = dataset[0].to(device)
+        torch.cuda.synchronize()
         total_load_data_and_model_dur += time.perf_counter() - load_start
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
         train_loss_all = []
@@ -122,17 +149,21 @@ def run_model_without_profiler(dataset):
     print("total_training_time(ms): {}".format(dur * 1000 / repeat_round))
 
     model.eval()
-    pred = model(data).argmax(dim=1)
+    if tensor_type == 'tensor':
+        pred = model(data.x, data.edge_index).argmax(dim=1)
+    elif tensor_type == 'sparse_tensor':
+        pred = model(data.x, data.adj_t).argmax(dim=1)
+    # pred = model(data).argmax(dim=1)
     correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
     acc = int(correct) / int(data.test_mask.sum())
     print(f'Accuracy: {acc:.4f}')
         
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
 
-def run_model_with_profiler(dataset):
-	
+def run_model_with_profiler():
     # warm up
-    device = torch.device('cuda')
+    # device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = GCN().to(device)
     data = dataset[0].to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
@@ -142,8 +173,8 @@ def run_model_with_profiler(dataset):
 
     print("warmup over.")
 
-    device = torch.device('cuda')
-    print(device)
+    # device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = GCN().to(device)
     data = dataset[0].to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
@@ -173,11 +204,18 @@ def run_model_with_profiler(dataset):
     print(prof.key_averages().table(sort_by="self_cuda_time_total"))
     
     model.eval()
-    pred = model(data).argmax(dim=1)
+    if tensor_type == 'tensor':
+        pred = model(data.x, data.edge_index).argmax(dim=1)
+    elif tensor_type == 'sparse_tensor':
+        pred = model(data.x, data.adj_t).argmax(dim=1)
+    # pred = model(data).argmax(dim=1)
     correct = (pred[data.test_mask] == data.y[data.test_mask]).sum()
     acc = int(correct) / int(data.test_mask.sum())
     print(f'Accuracy: {acc:.4f}')
     
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
 
-run_model_without_profiler(dataset)
+if use_profiler == 'true':
+    run_model_with_profiler()
+else:
+    run_model_without_profiler()
