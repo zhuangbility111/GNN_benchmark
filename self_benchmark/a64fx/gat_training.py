@@ -25,6 +25,7 @@ if torch.cuda.is_available():
     torch.backends.cudnn.allow_tf32 = False
 else:
     print("CPU version")
+    print("the number of threads = " + str(torch.get_num_threads()))
 
 if tensor_type == 'tensor':
     print('tensor_type: Tensor')
@@ -67,21 +68,21 @@ def train_with_instrumentation(data, model, optimizer):
         print('=' * 100)
         print('epoch:', epoch)
         optimizer.zero_grad()
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         forward_start = time.perf_counter()
         # out = model(data.x, data.edge_index)
         if tensor_type == 'tensor':
             out = model(data.x, data.edge_index)
         elif tensor_type == 'sparse_tensor':
             out = model(data.x, data.adj_t)
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         backward_start = time.perf_counter()
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         loss.backward()
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         update_weight_start = time.perf_counter()
         optimizer.step()
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         update_weight_end = time.perf_counter()
         total_forward_dur += backward_start - forward_start
         total_backward_dur += update_weight_start - backward_start
@@ -126,9 +127,15 @@ def run_model_with_profiler():
     data = dataset[0].to(device)
     # total_load_data_and_model_dur += time.perf_counter() - load_start
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
-    with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False, with_stack=False) as prof:
+    use_cuda = False
+    if torch.cuda.is_available():
+        use_cuda = True
+    with torch.autograd.profiler.profile(enabled=True, use_cuda=use_cuda, record_shapes=False, profile_memory=False, with_stack=False) as prof:
         train(data, model, optimizer)
-    print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+    if use_cuda == True:
+    	print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+    else:
+    	print(prof.key_averages().table(sort_by="self_cpu_time_total"))
 
     train_acc, val_acc, test_acc = test(model, data)
     print(f'Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
@@ -150,7 +157,7 @@ def run_model_without_profiler():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
     train_with_instrumentation(data, model, optimizer)
 
-    repeat_round = 10
+    repeat_round = 1
     for i in range(repeat_round):
         start = time.perf_counter()
         # device = torch.device('cuda')
