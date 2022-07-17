@@ -11,9 +11,14 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--tensor_type', type=str, default='tensor', help='The type of Tensor: \'tensor\' or \'sparse_tensor\'')
 parser.add_argument('--use_profiler', type=str, default='false', help='Use profiler: \'false\' or \'true\'')
+parser.add_argument('--cached', type=str, default='false', help='Cache the normalized weights: \'false\' or \'true\'')
 args = parser.parse_args()
 tensor_type = args.tensor_type
 use_profiler = args.use_profiler
+if args.cached == 'false':
+    cached = False
+elif args.cached == 'true':
+    cached = True
 
 if torch.cuda.is_available():
     print("GPU version")
@@ -27,10 +32,12 @@ else:
 
 if tensor_type == 'tensor':
     print('tensor_type: Tensor')
-    dataset = Planetoid(root='../../data/Cora', name='Cora')
+    transform = T.Compose([T.NormalizeFeatures()])
+    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
 elif tensor_type == 'sparse_tensor':
     print('tensor_type: SparseTensor')
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
+    transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
+    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
 
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)
@@ -45,8 +52,8 @@ print('Number of nodes:', dataset.data.x.shape[0])
 class GCN(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = GCNConv(dataset.num_node_features, 16)
-        self.conv2 = GCNConv(16, dataset.num_classes)
+        self.conv1 = GCNConv(dataset.num_node_features, 16, cached=cached)
+        self.conv2 = GCNConv(16, dataset.num_classes, cached=cached)
         # self.conv1 = GCNConv(dataset.num_node_features, dataset.num_node_features)
         # self.conv2 = GCNConv(dataset.num_node_features, dataset.num_classes)
 
@@ -72,6 +79,20 @@ def train(data, model, optimizer):
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         loss.backward()
         optimizer.step()
+
+@torch.no_grad()
+def test(model, data):
+    model.eval()
+    # out, accs = model(data.x, data.edge_index), []
+    if tensor_type == 'tensor':
+        out, accs = model(data.x, data.edge_index), []
+    elif tensor_type == 'sparse_tensor':
+        out, accs = model(data.x, data.adj_t), []
+
+    for _, mask in data('train_mask', 'val_mask', 'test_mask'):
+        acc = float((out[mask].argmax(-1) == data.y[mask]).sum() / mask.sum())
+        accs.append(acc)
+    return accs
 
 def train_with_instrumentation(data, model, optimizer):
     model.train()
@@ -123,7 +144,7 @@ def run_model_without_profiler():
 
     print("warmup over.")
     
-    repeat_round = 5
+    repeat_round = 10
     for _ in range(repeat_round):
         start = time.perf_counter()
         # device = torch.device('cuda')
@@ -151,6 +172,11 @@ def run_model_without_profiler():
     print("update_weight_time(ms): {}".format(total_update_weight_dur * 1000 / repeat_round))
     print("total_training_time(ms): {}".format(dur * 1000 / repeat_round))
 
+    train_acc, val_acc, test_acc = test(model, data)
+    print(f'Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
+    torch.save(model.state_dict(), 'GCNNet.pt')
+
+'''
     model.eval()
     if tensor_type == 'tensor':
         pred = model(data.x, data.edge_index).argmax(dim=1)
@@ -162,6 +188,7 @@ def run_model_without_profiler():
     print(f'Accuracy: {acc:.4f}')
         
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
+'''
 
 def run_model_with_profiler():
     # warm up
@@ -194,24 +221,16 @@ def run_model_with_profiler():
         end = time.perf_counter()
         dur = end - start
         print("training_time(s):{}".format(dur))
-            # train_loss_all.append(loss.data.numpy())
-        # print("training_time(s): {}, forward_time(s): {}, backward_time(s): {}, update_weight_time(s): {}".format((end - start), total_forward_dur, total_backward_dur, total_update_weight_dur))
-    
-        # loss = F.nll_loss(out[data.val_mask], data.y[data.val_mask])
-        # torch.cuda.synchronize()
-        # end = time.perf_counter()
-        # backward_dur = end - backward_start
-        # total_dur = end - start
-            # val_loss_all.append(loss.data.numpy())
-            # print('Epoch:{},train_loss:{},val_loss:{}'.format(epoch, train_loss_all[-1], val_loss_all[-1]))
-            # print('Epoch:{}'.format(epoch))
-            # print("forward_time(ms): {}, backward_time(ms): {}, total_time(ms): {}".format(forward_dur*10e3, backward_dur*10e3, total_dur*10e3))
-    # print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total"))
     if use_cuda == True: 
         print(prof.key_averages().table(sort_by="self_cuda_time_total"))
     else:
         print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+
+    train_acc, val_acc, test_acc = test(model, data)
+    print(f'Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}')
+    torch.save(model.state_dict(), 'GCNNet.pt')
     
+'''
     model.eval()
     if tensor_type == 'tensor':
         pred = model(data.x, data.edge_index).argmax(dim=1)
@@ -223,6 +242,7 @@ def run_model_with_profiler():
     print(f'Accuracy: {acc:.4f}')
     
     torch.save(model.state_dict(), 'GCNNet_v0.pt')
+'''
 
 if use_profiler == 'true':
     run_model_with_profiler()

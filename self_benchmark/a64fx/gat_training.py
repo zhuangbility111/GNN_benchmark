@@ -17,6 +17,8 @@ args = parser.parse_args()
 tensor_type = args.tensor_type
 use_profiler = args.use_profiler
 
+torch.use_deterministic_algorithms(True)
+
 if torch.cuda.is_available():
     print("GPU version")
     print("CUDA version:" + torch.version.cuda)
@@ -29,10 +31,13 @@ else:
 
 if tensor_type == 'tensor':
     print('tensor_type: Tensor')
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.NormalizeFeatures())
+    # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.NormalizeFeatures())
+    transform = T.Compose([T.NormalizeFeatures()])
+    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
 elif tensor_type == 'sparse_tensor':
     print('tensor_type: SparseTensor')
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.ToSparseTensor())
+    transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
+    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
 
 # dataset = 'Cora'
 # path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', dataset)
@@ -157,7 +162,7 @@ def run_model_without_profiler():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)
     train_with_instrumentation(data, model, optimizer)
 
-    repeat_round = 1
+    repeat_round = 5
     for i in range(repeat_round):
         start = time.perf_counter()
         # device = torch.device('cuda')
