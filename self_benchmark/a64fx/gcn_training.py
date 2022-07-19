@@ -33,11 +33,13 @@ else:
 if tensor_type == 'tensor':
     print('tensor_type: Tensor')
     transform = T.Compose([T.NormalizeFeatures()])
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 elif tensor_type == 'sparse_tensor':
     print('tensor_type: SparseTensor')
     transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 
 # dataset = Planetoid(root='~/data/PubMed', name='PubMed')
 print(dataset.data)

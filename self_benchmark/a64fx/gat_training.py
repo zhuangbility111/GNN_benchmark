@@ -33,19 +33,13 @@ if tensor_type == 'tensor':
     print('tensor_type: Tensor')
     # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=T.NormalizeFeatures())
     transform = T.Compose([T.NormalizeFeatures()])
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 elif tensor_type == 'sparse_tensor':
     print('tensor_type: SparseTensor')
     transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
-    dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
-
-# dataset = 'Cora'
-# path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', dataset)
-# dataset = Planetoid("../../data/Cora", dataset, transform=T.NormalizeFeatures())
-# data = dataset[0]
-# torch.cuda.set_device(5)
-# torch.backends.cuda.matmul.allow_tf32 = True
-# torch.backends.cudnn.allow_tf32 = True
+    # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
+    dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 
 class Net(torch.nn.Module):
     def __init__(self, in_channels, out_channels):
