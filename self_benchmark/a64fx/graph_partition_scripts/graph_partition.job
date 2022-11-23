@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH -J parmetis_test
+#SBATCH -p baode_cpu_long
+#SBATCH -N 4
+
+#SBATCH --cpus-per-task=1
+
+source /public/software/profile.d/mpi_mpich-gnu-3.2.sh
+export PATH=$PATH:/public/home/chenzhuang/software/metis/local/bin
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/public/home/chenzhuang/software/metis/local/lib
+
+mpirun -np 4 pm_dglpart arxiv 4

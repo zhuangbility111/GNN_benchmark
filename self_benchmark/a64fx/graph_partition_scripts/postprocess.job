@@ -1,0 +1,9 @@
+#!/bin/bash
+#SBATCH -J parmetis_test
+#SBATCH -p baode_cpu_long
+#SBATCH -N 2
+
+#SBATCH --cpus-per-task=1
+
+source /public/software/profile.d/mpi_mpich-gnu-3.2.sh
+python postprocess_graph.py -d ./ -g products -n 2 -l 100

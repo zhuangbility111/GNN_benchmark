@@ -1,0 +1,10 @@
+#!/bin/bash
+#SBATCH -J parmetis_test
+#SBATCH -p baode_cpu_long
+#SBATCH -N 1
+
+#SBATCH --cpus-per-task=1
+
+source /public/software/profile.d/mpi_mpich-gnu-3.2.sh
+source activate pytorch
+python preprocess_graph.py --dir_path ./ --dataset ogbn-products --graph_name products
