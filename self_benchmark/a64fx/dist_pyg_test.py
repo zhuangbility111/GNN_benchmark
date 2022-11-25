@@ -8,6 +8,7 @@ from torch_geometric.nn import DistGCNConv
 from torch_geometric.nn import DistGCNConvGrad
 from ogb.nodeproppred import PygNodePropPredDataset
 import numpy as np
+import pandas as pd
 import time
 import argparse
 import os
@@ -63,9 +64,9 @@ class DistGCNGrad(torch.nn.Module):
         super().__init__()
         num_layers = 3
         dropout = 0.5
-        in_channels = 128
+        in_channels = 100
         hidden_channels = 256
-        out_channels = 40
+        out_channels = 47
         cached = True
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistGCNConvGrad(in_channels, hidden_channels,
@@ -107,12 +108,29 @@ class DistGCNGrad(torch.nn.Module):
         #     bn.reset_parameters()
 
     def forward(self, x, local_edges_list, remote_edges_list):
+        total_conv_time = 0.0
+        total_relu_time = 0.0
+        total_dropout_time = 0.0
         for i, conv in enumerate(self.convs[:-1]):
+            conv_begin = time.perf_counter()
             x = conv(x, local_edges_list, remote_edges_list)
             # x = self.bns[i](x)
+            relu_begin = time.perf_counter()
             x = F.relu(x)
+            dropout_begin = time.perf_counter()
             x = F.dropout(x, p=self.dropout, training=self.training)
+            dropout_end = time.perf_counter()
+            total_conv_time += relu_begin - conv_begin
+            total_relu_time += dropout_begin - relu_begin
+            total_dropout_time += dropout_end - dropout_begin
+        conv_begin = time.perf_counter()
         x = self.convs[-1](x, local_edges_list, remote_edges_list)
+        total_conv_time += time.perf_counter() - conv_begin
+        print("----------------------------------------")
+        print("Time of conv(ms): {:.4f}".format(total_conv_time * 1000.0))
+        print("Time of relu(ms): {:.4f}".format(total_relu_time * 1000.0))
+        print("Time of dropout(ms): {:.4f}".format(total_dropout_time * 1000.0))
+        print("----------------------------------------")
         return F.log_softmax(x, dim=1)
 
 class GCN(torch.nn.Module):
@@ -271,12 +289,15 @@ def obtain_remote_nodes_list(remote_edges_list, num_local_nodes, num_nodes_on_ea
         range_of_remote_nodes_on_local_graph[i+1] = range_of_remote_nodes_on_local_graph[i]
 
     remote_nodes_list = np.array(remote_nodes_list)
+    print("remote_nodes_num_from_each_subgraph:")
+    print(remote_nodes_num_from_each_subgraph)
     return remote_nodes_list, range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph
 
 def load_graph_data(dir_path, graph_name, rank, world_size):
     # load vertices on subgraph
     load_nodes_start = time.perf_counter()
-    local_nodes_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), dtype='int64', delimiter=' ', usecols=(0, 3))
+    # local_nodes_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), dtype='int64', delimiter=' ', usecols=(0, 3))
+    local_nodes_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
     node_idx_begin = local_nodes_list[0][0]
     node_idx_end = local_nodes_list[local_nodes_list.shape[0]-1][0]
     print("nodes_id_range: {} - {}".format(node_idx_begin, node_idx_end))
@@ -285,17 +306,20 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     time_load_nodes = load_nodes_end - load_nodes_start
 
     # load features of vertices on subgraph
-    nodes_feat_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), dtype='float32', delimiter=' ')
+    # nodes_feat_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), dtype='float32', delimiter=' ')
+    nodes_feat_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), sep=" ", header=None, dtype=np.float32).values
     load_nodes_feats_end = time.perf_counter()
     time_load_nodes_feats = load_nodes_feats_end - load_nodes_end
 
     # load labels of vertices on subgraph
-    nodes_label_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
+    # nodes_label_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
+    nodes_label_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), sep=" ", header=None).values
     load_nodes_labels_end = time.perf_counter()
     time_load_nodes_labels = load_nodes_labels_end - load_nodes_feats_end
 
     # load edges on subgraph
-    edges_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
+    # edges_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
+    edges_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), sep=" ", header=None).values
     load_edges_list_end = time.perf_counter()
     time_load_edges_list = load_edges_list_end - load_nodes_labels_end
 
@@ -379,10 +403,13 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     
 def transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, num_local_nodes, num_remote_nodes):
     # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes)).to_symmetric()
-    local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
-    remote_edges_list = SparseTensor(row=remote_edges_list[1], col=remote_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
-    print(local_edges_list)
-    print(remote_edges_list)
+    # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
+    # remote_edges_list = SparseTensor(row=remote_edges_list[1], col=remote_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
+    local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes))
+    tmp_col = remote_edges_list[0] - num_local_nodes
+    remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=None, sparse_sizes=(num_local_nodes, num_remote_nodes))
+    # print(local_edges_list)
+    # print(remote_edges_list)
     return local_edges_list, remote_edges_list
 
 def train(model, optimizer, nodes_feat_list, nodes_label_list, 
@@ -489,6 +516,7 @@ if __name__ == "__main__":
     parser.add_argument('--tensor_type', type=str, default='tensor')
     parser.add_argument('--use_profiler', type=str, default='false')
     parser.add_argument('--cached', type=str, default='true')
+    parser.add_argument('--graph_name', type=str, default='arxiv')
     args = parser.parse_args()
     tensor_type = args.tensor_type
     use_profiler = args.use_profiler
@@ -496,18 +524,20 @@ if __name__ == "__main__":
         cached = False
     elif args.cached == 'true':
         cached = True
+    graph_name = args.graph_name
+    graph_name = 'products'
 
     rank, world_size = init_dist_group()
     num_part = world_size
     torch.set_num_threads(12)
     print("Rank = {}, Number of threads = {}".format(rank, torch.get_num_threads()))
 
-    dataset = PygNodePropPredDataset(name = 'ogbn-arxiv') 
+    dataset = PygNodePropPredDataset(name = 'ogbn-{}'.format(graph_name)) 
 
     # obtain graph information
     local_nodes_list, nodes_feat_list, nodes_label_list, remote_nodes_list, \
         range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph, \
-        local_edges_list, remote_edges_list = load_graph_data("./arxiv_graph_{}_part/".format(num_part), "arxiv", rank, world_size)
+        local_edges_list, remote_edges_list = load_graph_data("./ogbn_{}/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
 
     # obtain training, validated, testing mask
     local_train_mask, local_valid_mask, local_test_mask = remap_dataset_mask(dataset.get_idx_split(), local_nodes_list, rank)
@@ -537,6 +567,7 @@ if __name__ == "__main__":
         print(param)
     '''
     
+    '''
     for name, parameters in model.named_parameters():
         print(name, parameters.size())
 
@@ -550,6 +581,8 @@ if __name__ == "__main__":
 
     test(model, nodes_feat_list, nodes_label_list, \
          local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
+    '''
+
     '''
     # save model parameters
     if rank == 0:
