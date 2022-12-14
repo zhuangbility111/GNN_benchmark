@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 import os
 import time
+from multiprocessing import Process
 
 def divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end):
     local_edges_list = [[], []]
@@ -24,10 +25,10 @@ def divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end)
     remote_edges_list = np.array(remote_edges_list, dtype=np.int64)
     return local_edges_list, remote_edges_list
 
-def split_nodes_feats(dir_path, graph_name, num_partition, len_feature):
-        node_range_on_each_part = []
-        node_range_on_each_part.append(0)
-        for i in range(num_partition):
+def split_nodes_feats(dir_path, graph_name, begin_part, end_part, len_feature):
+        # node_range_on_each_part = []
+        # node_range_on_each_part.append(0)
+        for i in range(begin_part, end_part):
                 # node_id_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(i, graph_name)), dtype='int64', delimiter = ' ', usecols=(0, 3))
                 node_id_list = pd.read_csv(os.path.join("./", "p{:0>3d}-{}_nodes.txt".format(i, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
                 # save the node_id_list to npy file
@@ -35,7 +36,7 @@ def split_nodes_feats(dir_path, graph_name, num_partition, len_feature):
                 begin_idx = node_id_list[0][0]
                 num_nodes = node_id_list.shape[0]
                 end_idx = node_id_list[num_nodes-1][0]
-                node_range_on_each_part.append(node_range_on_each_part[i] + num_nodes)
+                # node_range_on_each_part.append(node_range_on_each_part[i] + num_nodes)
                 print(node_id_list.shape)
                 # node_id_list.sort()
                 node_id_list = node_id_list[node_id_list[:, 1].argsort()]
@@ -79,8 +80,8 @@ def split_nodes_feats(dir_path, graph_name, num_partition, len_feature):
                 np.save(os.path.join(dir_path, "p{:0>3d}-{}_local_edges.npy".format(i, graph_name)), local_edges_list)
                 np.save(os.path.join(dir_path, "p{:0>3d}-{}_remote_edges.npy".format(i, graph_name)), remote_edges_list)
         
-        node_range_on_each_part = np.array(node_range_on_each_part).reshape(1, -1)
-        np.savetxt(os.path.join(dir_path, "begin_node_on_each_partition.txt"), node_range_on_each_part, fmt = "%d", delimiter = ' ')
+        # node_range_on_each_part = np.array(node_range_on_each_part).reshape(1, -1)
+        # np.savetxt(os.path.join(dir_path, "begin_node_on_each_partition.txt"), node_range_on_each_part, fmt = "%d", delimiter = ' ')
 
 # compare two array and remap the elem in train_idx according to the mapping in nodes_id_list
 # global id is mapped to local id in train_idx
@@ -103,13 +104,14 @@ def compare_array(train_idx, nodes_id_list, node_idx_begin):
 
     return np.array(local_train_idx)
 
-def split_node_datamask(dir_path, graph_name, num_partition):
+def split_node_datamask(dir_path, graph_name, begin_part, end_part):
     remap_start = time.perf_counter()
     train_idx = pd.read_csv(os.path.join("./", "{}_nodes_train_idx.txt".format(graph_name)), sep=" ", header=None).values
     valid_idx = pd.read_csv(os.path.join("./", "{}_nodes_valid_idx.txt".format(graph_name)), sep=" ", header=None).values
     test_idx = pd.read_csv(os.path.join("./", "{}_nodes_test_idx.txt".format(graph_name)), sep=" ", header=None).values
-    for i in range(num_partition):
-        nodes_id_list = pd.read_csv(os.path.join("./", "p{:0>3d}-{}_nodes.txt".format(i, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
+    for i in range(begin_part, end_part):
+        # nodes_id_list = pd.read_csv(os.path.join("./", "p{:0>3d}-{}_nodes.txt".format(i, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
+        nodes_id_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes.npy".format(i, graph_name)))
         node_idx_begin = nodes_id_list[0][0]
         nodes_id_list = nodes_id_list[nodes_id_list[:,1].argsort()]
 
@@ -132,6 +134,9 @@ def split_node_datamask(dir_path, graph_name, num_partition):
     remap_end = time.perf_counter()
     print("elapsed time of ramapping dataset mask(ms) = {}".format((remap_end - remap_start) * 1000))
     
+def combined_func(dir_path, graph_name, begin_part, end_part, len_feature):
+        split_nodes_feats(dir_path, graph_name, begin_part, end_part, len_feature)
+        split_node_datamask(dir_path, graph_name, begin_part, end_part)
 
 if __name__ == "__main__":
         parser = argparse.ArgumentParser()
@@ -144,5 +149,24 @@ if __name__ == "__main__":
         graph_name = args.graph_name
         num_partition = args.num_partition
         len_feature = args.len_feature
-        split_nodes_feats(dir_path, graph_name, num_partition, len_feature)
-        split_node_datamask(dir_path, graph_name, num_partition)
+        num_process = 8
+        begin_part = 0
+        end_part = num_partition
+        step = int((end_part - begin_part + num_process - 1) / num_process)
+        process_list = []
+        for pid in range(num_process):
+            p = Process(target=combined_func, 
+                        args=(dir_path, graph_name, begin_part + pid*step, min((begin_part + (pid+1)*step), end_part), len_feature))
+            p.start()
+            process_list.append(p)
+
+        for pid in range(num_process):
+            p.join()
+
+        print("All process over!!!")
+        node_range_on_each_part = np.zeros(num_partition+1, dtype=np.int64)
+        for i in range(num_partition): 
+            tmp = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes.npy".format(i, graph_name)))
+            node_range_on_each_part[i+1] = tmp[-1][0] + 1
+        np.savetxt(os.path.join(dir_path, "begin_node_on_each_partition.txt"), node_range_on_each_part.reshape(1, -1), fmt = "%d", delimiter = ' ')
+

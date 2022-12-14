@@ -22,15 +22,28 @@ num_nodes = graph['num_nodes']
 ###### process nodes labels ######
 print(node_label)
 print(node_label.shape)
-np.savetxt(os.path.join(dir_path, "{}_nodes_label.txt".format(graph_name)), node_label, fmt="%d", delimiter=' ')
+# np.savetxt(os.path.join(dir_path, "{}_nodes_label.txt".format(graph_name)), node_label, fmt="%d", delimiter=' ')
+np.save(os.path.join(dir_path, "{}_nodes_label.npy".format(graph_name)), node_label)
 
 ###### process nodes features ######
 node_feat = graph['node_feat']
-np.savetxt(os.path.join(dir_path, "{}_nodes_feat.txt".format(graph_name)), node_feat, delimiter=' ')
+# np.savetxt(os.path.join(dir_path, "{}_nodes_feat.npy".format(graph_name)), node_feat)
+np.save(os.path.join(dir_path, "{}_nodes_feat.npy".format(graph_name)), node_feat)
 print(num_nodes)
 print(node_feat.shape)
 del node_feat
 gc.collect()
+
+###### process node mask (training, test, validated) ######
+dataset_mask = dataset.get_idx_split()
+train_idx, valid_idx, test_idx = dataset_mask["train"], dataset_mask["valid"], dataset_mask["test"]
+# np.savetxt(os.path.join(dir_path, "{}_nodes_train_idx.txt".format(graph_name)), train_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(dir_path, "{}_nodes_train_idx.npy".format(graph_name)), train_idx)
+# np.savetxt(os.path.join(dir_path, "{}_nodes_valid_idx.txt".format(graph_name)), valid_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(dir_path, "{}_nodes_valid_idx.npy".format(graph_name)), valid_idx)
+# np.savetxt(os.path.join(dir_path, "{}_nodes_test_idx.txt".format(graph_name)), test_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(dir_path, "{}_nodes_test_idx.npy".format(graph_name)), test_idx)
+print("save training, valid, test idx successfully.")
 
 ###### process edge ######
 edge_index = graph['edge_index']
