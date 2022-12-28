@@ -56,7 +56,7 @@ def split_nodes_feats(dir_path, graph_name, num_partition, len_feature):
                 np.save(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.npy".format(i, graph_name)), node_feat_list)
 
                 # node_label_list = []
-                node_label_list = np.empty([num_nodes], dtype=int)
+                node_label_list = np.empty([num_nodes], dtype=np.int64)
                 idx_in_node_list = 0
                 with open(os.path.join("./", "{}_nodes_label.txt".format(graph_name))) as file:
                         for idx, line in enumerate(file):
@@ -101,7 +101,7 @@ def compare_array(train_idx, nodes_id_list, node_idx_begin):
             idx_in_mask += 1
             idx_in_node += 1
 
-    return np.array(local_train_idx)
+    return np.array(local_train_idx, dtype=np.int64)
 
 def split_node_datamask(dir_path, graph_name, num_partition):
     remap_start = time.perf_counter()
