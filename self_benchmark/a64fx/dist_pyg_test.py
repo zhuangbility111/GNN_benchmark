@@ -6,12 +6,21 @@ from torch_sparse import SparseTensor
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import DistGCNConv
 from torch_geometric.nn import DistGCNConvGrad
-from ogb.nodeproppred import PygNodePropPredDataset
+# from ogb.nodeproppred import PygNodePropPredDataset
 import numpy as np
 import pandas as pd
 import time
 import argparse
 import os
+import random
+
+
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    # torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    # torch.backends.cudnn.deterministic = True
 
 '''
 class DistGCNGrad(torch.nn.Module):
@@ -23,10 +32,10 @@ class DistGCNGrad(torch.nn.Module):
                  num_part,
                  cached):
         super().__init__()
-        num_node_features = 128
-        num_classes = 40
-        num_hidden_channels = 256
-        # num_hidden_channels = 16
+        num_node_features = 500
+        num_classes = 3
+        # num_hidden_channels = 256
+        num_hidden_channels = 16
         self.conv1 = DistGCNConvGrad(num_node_features, num_hidden_channels, 
                                  local_nodes_required_by_other, 
                                  remote_nodes_list,
@@ -64,9 +73,17 @@ class DistGCNGrad(torch.nn.Module):
         super().__init__()
         num_layers = 3
         dropout = 0.5
+        # ogbn-arxiv
         in_channels = 100
+        # in_channels = 128
+        # ogbn-papers100M
+        # in_channels = 128
         hidden_channels = 256
+        # ogbn-arxiv
         out_channels = 47
+        # out_channels = 40
+        # ogbn-papers100M
+        # out_channels = 172
         cached = True
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistGCNConvGrad(in_channels, hidden_channels,
@@ -120,19 +137,23 @@ class DistGCNGrad(torch.nn.Module):
             dropout_begin = time.perf_counter()
             x = F.dropout(x, p=self.dropout, training=self.training)
             dropout_end = time.perf_counter()
-            total_conv_time += relu_begin - conv_begin
-            total_relu_time += dropout_begin - relu_begin
-            total_dropout_time += dropout_end - dropout_begin
+            # total_conv_time += relu_begin - conv_begin
+            total_conv_time = relu_begin - conv_begin
+            # total_relu_time += dropout_begin - relu_begin
+            total_relu_time = dropout_begin - relu_begin
+            # total_dropout_time += dropout_end - dropout_begin
+            total_dropout_time = dropout_end - dropout_begin
+            print("----------------------------------------")
+            print("Time of conv(ms): {:.4f}".format(total_conv_time * 1000.0))
+            print("Time of relu(ms): {:.4f}".format(total_relu_time * 1000.0))
+            print("Time of dropout(ms): {:.4f}".format(total_dropout_time * 1000.0))
+            print("----------------------------------------")
         conv_begin = time.perf_counter()
         x = self.convs[-1](x, local_edges_list, remote_edges_list)
-        total_conv_time += time.perf_counter() - conv_begin
-        print("----------------------------------------")
-        print("Time of conv(ms): {:.4f}".format(total_conv_time * 1000.0))
-        print("Time of relu(ms): {:.4f}".format(total_relu_time * 1000.0))
-        print("Time of dropout(ms): {:.4f}".format(total_dropout_time * 1000.0))
-        print("----------------------------------------")
+        # total_conv_time += time.perf_counter() - conv_begin
         return F.log_softmax(x, dim=1)
 
+'''
 class GCN(torch.nn.Module):
     def __init__(self, cached):
         super(GCN, self).__init__()
@@ -169,14 +190,14 @@ class GCN(torch.nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj_t)
         return x.log_softmax(dim=-1)
-
 '''
+
 class GCN(torch.nn.Module):
     def __init__(self, cached):
         super().__init__()
-        num_node_features = 128
-        num_classes = 40
-        num_hidden_channels = 256
+        num_node_features = 500
+        num_classes = 3
+        num_hidden_channels = 16
         self.conv1 = GCNConv(num_node_features, num_hidden_channels, cached=cached)
         self.conv2 = GCNConv(num_hidden_channels, num_classes, cached=cached)
 
@@ -188,7 +209,6 @@ class GCN(torch.nn.Module):
         x = F.dropout(x, training=self.training)
         x = self.conv2(x, edge)
         return F.log_softmax(x, dim=1)
-'''
 
 # compare two array and remap the elem in train_idx according to the mapping in nodes_id_list
 # global id is mapped to local id in train_idx
@@ -231,9 +251,24 @@ def remap_dataset_mask(dataset_mask, nodes_id_list, rank):
     local_test_idx = compare_array(test_idx, nodes_id_list, node_idx_begin)
     remap_end = time.perf_counter()
     if rank == 0:
-        print("elapsed time of ramapping dataset mask(ms) = {}".format((remap_end - remap_start) * 1000))
+        print("elapsed time of remapping dataset mask(ms) = {}".format((remap_end - remap_start) * 1000))
 
     return local_train_idx, local_valid_idx, local_test_idx
+
+# To load the training mask, test mask and validated mask from file 
+def load_dataset_mask(dir_path, graph_name, rank, world_size):
+    start = time.perf_counter()
+    # train_idx = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_train_idx.txt".format(rank, graph_name)), sep=" ", header=None).values
+    train_idx = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_train_idx.npy".format(rank, graph_name)))
+    print(train_idx.dtype)
+    # valid_idx = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_valid_idx.txt".format(rank, graph_name)), sep=" ", header=None).values
+    valid_idx = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_valid_idx.npy".format(rank, graph_name)))
+    # test_idx = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_test_idx.txt".format(rank, graph_name)), sep=" ", header=None).values
+    test_idx = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_test_idx.npy".format(rank, graph_name)))
+    end = time.perf_counter()
+    print("elapsed time of loading dataset mask(ms) = {}".format((end - start) * 1000))
+
+    return torch.from_numpy(train_idx), torch.from_numpy(valid_idx), torch.from_numpy(test_idx)
 
 def divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end):
     local_edges_list = [[], []]
@@ -288,16 +323,32 @@ def obtain_remote_nodes_list(remote_edges_list, num_local_nodes, num_nodes_on_ea
     for i in range(part_idx+1, world_size):
         range_of_remote_nodes_on_local_graph[i+1] = range_of_remote_nodes_on_local_graph[i]
 
-    remote_nodes_list = np.array(remote_nodes_list)
-    print("remote_nodes_num_from_each_subgraph:")
+    remote_nodes_list = np.array(remote_nodes_list, dtype=np.int64)
+    print("local remote_nodes_num_from_each_subgraph:")
     print(remote_nodes_num_from_each_subgraph)
+
+    '''
+    global_list = [torch.zeros(world_size, dtype=torch.int64) for _ in range(world_size)]
+    dist.gather(remote_nodes_num_from_each_subgraph, global_list if dist.get_rank() == 0 else None, 0)
+    if dist.get_rank() == 0:
+        global_comm_tesosr = global_list[0]
+        for i in range(1, world_size):
+            global_comm_tesosr = torch.cat((global_comm_tesosr, global_list[i]))
+
+        global_comm_array = global_comm_tesosr.reshape(world_size, world_size).numpy()
+        print(global_comm_array)
+        np.save('./move_communication_pattern/global_comm_{}.npy'.format(world_size), global_comm_array)
+    '''
+
     return remote_nodes_list, range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph
 
 def load_graph_data(dir_path, graph_name, rank, world_size):
     # load vertices on subgraph
     load_nodes_start = time.perf_counter()
     # local_nodes_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), dtype='int64', delimiter=' ', usecols=(0, 3))
-    local_nodes_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
+    # local_nodes_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes.txt".format(rank, graph_name)), sep=" ", header=None, usecols=[0, 3]).values
+    local_nodes_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes.npy".format(rank, graph_name)))
+    print(local_nodes_list.dtype)
     node_idx_begin = local_nodes_list[0][0]
     node_idx_end = local_nodes_list[local_nodes_list.shape[0]-1][0]
     print("nodes_id_range: {} - {}".format(node_idx_begin, node_idx_end))
@@ -307,19 +358,26 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
 
     # load features of vertices on subgraph
     # nodes_feat_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), dtype='float32', delimiter=' ')
-    nodes_feat_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), sep=" ", header=None, dtype=np.float32).values
+    # nodes_feat_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.txt".format(rank, graph_name)), sep=" ", header=None, dtype=np.float32).values
+    nodes_feat_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
+    print("nodes_feat_list.shape:")
+    print(nodes_feat_list.shape)
+    print(nodes_feat_list.dtype)
     load_nodes_feats_end = time.perf_counter()
     time_load_nodes_feats = load_nodes_feats_end - load_nodes_end
 
     # load labels of vertices on subgraph
     # nodes_label_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
-    nodes_label_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), sep=" ", header=None).values
+    # nodes_label_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.txt".format(rank, graph_name)), sep=" ", header=None).values
+    nodes_label_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.npy".format(rank, graph_name)))
+    print(nodes_label_list.dtype)
     load_nodes_labels_end = time.perf_counter()
     time_load_nodes_labels = load_nodes_labels_end - load_nodes_feats_end
 
     # load edges on subgraph
     # edges_list = np.loadtxt(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), dtype='int64', delimiter=' ')
-    edges_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), sep=" ", header=None).values
+    # edges_list = pd.read_csv(os.path.join(dir_path, "p{:0>3d}-{}_edges.txt".format(rank, graph_name)), sep=" ", header=None).values
+    # edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_edges.npy".format(rank, graph_name)))
     load_edges_list_end = time.perf_counter()
     time_load_edges_list = load_edges_list_end - load_nodes_labels_end
 
@@ -329,7 +387,15 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     time_load_number_nodes = load_number_nodes_end - load_edges_list_end
 
     # divide the global edges list into the local edges list and the remote edges list
-    local_edges_list, remote_edges_list = divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end)
+    # local_edges_list, remote_edges_list = divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end)
+    local_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_local_edges.npy".format(rank, graph_name)))
+    remote_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_remote_edges.npy".format(rank, graph_name)))
+    print(local_edges_list)
+    print(local_edges_list.shape)
+    print(local_edges_list.dtype)
+    print(remote_edges_list)
+    print(remote_edges_list.shape)
+    print(remote_edges_list.dtype)
     divide_edges_list_end = time.perf_counter()
     time_divide_edges_list = divide_edges_list_end - load_number_nodes_end
 
@@ -437,11 +503,12 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
         loss.backward()
 
         share_grad_start = time.perf_counter()
+        '''
         # communicate gradients
         for param in model.parameters():
             dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
             param.grad.data /= float(world_size)
-
+        '''
         update_weight_start = time.perf_counter()
         optimizer.step()
         print("rank: {}, epoch: {}, loss: {}".format(rank, epoch, loss.item()))
@@ -481,7 +548,7 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
     '''
 
 def test(model, nodes_feat_list, nodes_label_list, \
-         local_edges_list, remote_edges_list, local_train_mask, rank, world_size):
+         local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size):
     # check accuracy
     model.eval()
     predict_result = []
@@ -526,22 +593,48 @@ if __name__ == "__main__":
         cached = True
     graph_name = args.graph_name
     graph_name = 'products'
+    # graph_name = 'papers100M'
+    # graph_name = 'pubmed'
+
+    # set random seed
+    # setup_seed(3407)
 
     rank, world_size = init_dist_group()
     num_part = world_size
     torch.set_num_threads(12)
     print("Rank = {}, Number of threads = {}".format(rank, torch.get_num_threads()))
 
-    dataset = PygNodePropPredDataset(name = 'ogbn-{}'.format(graph_name)) 
+    # dataset = PygNodePropPredDataset(name = 'ogbn-{}'.format(graph_name)) 
 
     # obtain graph information
     local_nodes_list, nodes_feat_list, nodes_label_list, remote_nodes_list, \
         range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph, \
-        local_edges_list, remote_edges_list = load_graph_data("./ogbn_{}/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
+        local_edges_list, remote_edges_list = load_graph_data("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
+
+    '''
+    print(range_of_remote_nodes_on_local_graph)
+    print(remote_edges_list[0])
+    for i in range(num_part):
+        # print(remote_nodes_list[range_of_remote_nodes_on_local_graph[i]: range_of_remote_nodes_on_local_graph[i+1]])
+        begin_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i]]
+        end_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i+1]]
+        print("begin_idx = {}, end_idx = {}".format(begin_idx, end_idx))
+        idx = ((remote_edges_list[0] >= begin_idx) & (remote_edges_list[0] < end_idx)).nonzero()
+        diff_src_node = torch.unique(remote_edges_list[0][idx], return_counts=True)[1]
+        diff_dst_node = torch.unique(remote_edges_list[1][idx], return_counts=True)[1]
+        src_res, indices = torch.sort(diff_src_node, descending=True)
+        dst_res, indices = torch.sort(diff_dst_node, descending=True)
+        print(src_res)
+        print(dst_res)
+        print("total number of remote src nodes = {}".format(src_res.shape[0]))
+        print("total number of remote dst nodes = {}".format(dst_res.shape[0]))
+    '''
 
     # obtain training, validated, testing mask
-    local_train_mask, local_valid_mask, local_test_mask = remap_dataset_mask(dataset.get_idx_split(), local_nodes_list, rank)
-
+    # local_train_mask, local_valid_mask, local_test_mask = remap_dataset_mask(dataset.get_idx_split(), local_nodes_list, rank)
+    local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
+    # local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./test_level_partition/{}_graph_{}_part/".format(graph_name, num_part), graph_name, rank, world_size)
+        
     # obtain the idx of local nodes required by other subgraph
     local_nodes_required_by_other, num_local_nodes_required_by_other = \
         obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -560,27 +653,42 @@ if __name__ == "__main__":
                             rank,
                             world_size,
                             cached).to(device)
-    '''
-    # load model parameters 
-    model.load_state_dict(torch.load('./GCNNet.pt'))
-    for param in model.parameters():
-        print(param)
-    '''
-    
-    '''
+
     for name, parameters in model.named_parameters():
         print(name, parameters.size())
 
     # DDP should synchronize between GPUs when doing batchnorm
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model = torch.nn.parallel.DistributedDataParallel(model)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-    train(model, optimizer, nodes_feat_list, nodes_label_list, \
+    para_model = torch.nn.parallel.DistributedDataParallel(model)
+    optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
+    # optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01, weight_decay=5e-4)
+
+    train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
           local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
+    test(para_model, nodes_feat_list, nodes_label_list, \
+         local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
 
-    test(model, nodes_feat_list, nodes_label_list, \
-         local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
+    '''
+    with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=True, with_stack=False) as prof:
+        for _ in range(1):
+        # para_model = torch.nn.parallel.DistributedDataParallel(model)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        # optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01, weight_decay=5e-4)
+            train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
+                local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
+
+    print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+    test(para_model, nodes_feat_list, nodes_label_list, \
+        local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
+    '''
+
+    '''
+    with torch.autograd.profiler.profile(enabled=True, use_cuda=False, record_shapes=False, profile_memory=False, with_stack=False) as prof:
+        para_model = torch.nn.parallel.DistributedDataParallel(model)
+        test(para_model, nodes_feat_list, nodes_label_list, \
+            local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
+    print(prof.key_averages().table(sort_by="self_cpu_time_total"))
     '''
 
     '''
