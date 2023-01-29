@@ -14,6 +14,8 @@ import argparse
 import os
 import random
 
+import psutil
+
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -73,18 +75,30 @@ class DistGCNGrad(torch.nn.Module):
         super().__init__()
         num_layers = 3
         dropout = 0.5
-        # ogbn-arxiv
+        # ogbn-products
         in_channels = 100
+        # ogbn-arxiv
         # in_channels = 128
         # ogbn-papers100M
         # in_channels = 128
         hidden_channels = 256
-        # ogbn-arxiv
+        # ogbn-products
         out_channels = 47
+        # ogbn-arxiv
         # out_channels = 40
         # ogbn-papers100M
         # out_channels = 172
         cached = True
+
+        max_feat_len = max(in_channels, hidden_channels, out_channels)
+        num_send_nodes = 0
+        for tmp_tensor in local_nodes_required_by_other:
+            num_send_nodes += tmp_tensor.size(0)
+        send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
+
+        num_recv_nodes = remote_nodes_list.size(0)
+        recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistGCNConvGrad(in_channels, hidden_channels,
                                  local_nodes_required_by_other,
@@ -93,6 +107,8 @@ class DistGCNGrad(torch.nn.Module):
                                  range_of_remote_nodes_on_local_graph,
                                  rank,
                                  num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf,
                                  cached=cached))
         # self.bns = torch.nn.ModuleList()
         # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
@@ -105,6 +121,8 @@ class DistGCNGrad(torch.nn.Module):
                                  range_of_remote_nodes_on_local_graph,
                                  rank,
                                  num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf,
                                  cached=cached))
             # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
         self.convs.append(DistGCNConvGrad(hidden_channels, out_channels,
@@ -114,6 +132,8 @@ class DistGCNGrad(torch.nn.Module):
                                  range_of_remote_nodes_on_local_graph,
                                  rank,
                                  num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf,
                                  cached=cached))
 
         self.dropout = dropout
@@ -148,6 +168,7 @@ class DistGCNGrad(torch.nn.Module):
             print("Time of relu(ms): {:.4f}".format(total_relu_time * 1000.0))
             print("Time of dropout(ms): {:.4f}".format(total_dropout_time * 1000.0))
             print("----------------------------------------")
+
         conv_begin = time.perf_counter()
         x = self.convs[-1](x, local_edges_list, remote_edges_list)
         # total_conv_time += time.perf_counter() - conv_begin
@@ -328,12 +349,11 @@ def obtain_remote_nodes_list(remote_edges_list, num_local_nodes, num_nodes_on_ea
     print(remote_nodes_num_from_each_subgraph)
 
     '''
+    # collect communication pattern
     global_list = [torch.zeros(world_size, dtype=torch.int64) for _ in range(world_size)]
     dist.gather(remote_nodes_num_from_each_subgraph, global_list if dist.get_rank() == 0 else None, 0)
     if dist.get_rank() == 0:
-        global_comm_tesosr = global_list[0]
-        for i in range(1, world_size):
-            global_comm_tesosr = torch.cat((global_comm_tesosr, global_list[i]))
+        global_comm_tesosr = torch.cat((global_list))
 
         global_comm_array = global_comm_tesosr.reshape(world_size, world_size).numpy()
         print(global_comm_array)
@@ -612,22 +632,30 @@ if __name__ == "__main__":
         local_edges_list, remote_edges_list = load_graph_data("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
 
     '''
+    # compare the number of local nodes and remote nodes
     print(range_of_remote_nodes_on_local_graph)
     print(remote_edges_list[0])
+    num_diff_nodes = 0
+    begin_idx = 0
+    end_idx = 0
     for i in range(num_part):
         # print(remote_nodes_list[range_of_remote_nodes_on_local_graph[i]: range_of_remote_nodes_on_local_graph[i+1]])
         begin_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i]]
-        end_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i+1]]
+        if range_of_remote_nodes_on_local_graph[i] != range_of_remote_nodes_on_local_graph[i+1]:
+            end_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i+1]-1]
+        else:
+            end_idx = begin_idx - 1
         print("begin_idx = {}, end_idx = {}".format(begin_idx, end_idx))
-        idx = ((remote_edges_list[0] >= begin_idx) & (remote_edges_list[0] < end_idx)).nonzero()
+        idx = ((remote_edges_list[0] >= begin_idx) & (remote_edges_list[0] <= end_idx)).nonzero()
         diff_src_node = torch.unique(remote_edges_list[0][idx], return_counts=True)[1]
         diff_dst_node = torch.unique(remote_edges_list[1][idx], return_counts=True)[1]
         src_res, indices = torch.sort(diff_src_node, descending=True)
         dst_res, indices = torch.sort(diff_dst_node, descending=True)
-        print(src_res)
-        print(dst_res)
         print("total number of remote src nodes = {}".format(src_res.shape[0]))
         print("total number of remote dst nodes = {}".format(dst_res.shape[0]))
+        num_diff_nodes += abs(src_res.shape[0] - dst_res.shape[0])
+
+    print("num_diff_nodes = {}".format(num_diff_nodes))
     '''
 
     # obtain training, validated, testing mask
