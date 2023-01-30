@@ -6,6 +6,7 @@ from torch_sparse import SparseTensor
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import DistGCNConv
 from torch_geometric.nn import DistGCNConvGrad
+from torch_geometric.nn import DistSAGEConvGrad
 # from ogb.nodeproppred import PygNodePropPredDataset
 import numpy as np
 import pandas as pd
@@ -135,6 +136,111 @@ class DistGCNGrad(torch.nn.Module):
                                  send_nodes_feat_buf,
                                  recv_nodes_feat_buf,
                                  cached=cached))
+
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        # for bn in self.bns:
+        #     bn.reset_parameters()
+
+    def forward(self, x, local_edges_list, remote_edges_list):
+        total_conv_time = 0.0
+        total_relu_time = 0.0
+        total_dropout_time = 0.0
+        for i, conv in enumerate(self.convs[:-1]):
+            conv_begin = time.perf_counter()
+            x = conv(x, local_edges_list, remote_edges_list)
+            # x = self.bns[i](x)
+            relu_begin = time.perf_counter()
+            x = F.relu(x)
+            dropout_begin = time.perf_counter()
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            dropout_end = time.perf_counter()
+            # total_conv_time += relu_begin - conv_begin
+            total_conv_time = relu_begin - conv_begin
+            # total_relu_time += dropout_begin - relu_begin
+            total_relu_time = dropout_begin - relu_begin
+            # total_dropout_time += dropout_end - dropout_begin
+            total_dropout_time = dropout_end - dropout_begin
+            print("----------------------------------------")
+            print("Time of conv(ms): {:.4f}".format(total_conv_time * 1000.0))
+            print("Time of relu(ms): {:.4f}".format(total_relu_time * 1000.0))
+            print("Time of dropout(ms): {:.4f}".format(total_dropout_time * 1000.0))
+            print("----------------------------------------")
+
+        conv_begin = time.perf_counter()
+        x = self.convs[-1](x, local_edges_list, remote_edges_list)
+        # total_conv_time += time.perf_counter() - conv_begin
+        return F.log_softmax(x, dim=1)
+
+class DistSAGEGrad(torch.nn.Module):
+    def __init__(self, local_nodes_required_by_other,
+                 remote_nodes_list,
+                 remote_nodes_num_from_each_subgraph,
+                 range_of_remote_nodes_on_local_graph,
+                 rank,
+                 num_part):
+        super().__init__()
+        num_layers = 3
+        dropout = 0.5
+        # ogbn-products
+        in_channels = 100
+        # ogbn-arxiv
+        # in_channels = 128
+        # ogbn-papers100M
+        # in_channels = 128
+        hidden_channels = 256
+        # ogbn-products
+        out_channels = 47
+        # ogbn-arxiv
+        # out_channels = 40
+        # ogbn-papers100M
+        # out_channels = 172
+
+        max_feat_len = max(in_channels, hidden_channels, out_channels)
+        num_send_nodes = 0
+        for tmp_tensor in local_nodes_required_by_other:
+            num_send_nodes += tmp_tensor.size(0)
+        send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
+
+        num_recv_nodes = remote_nodes_list.size(0)
+        recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+
+        self.convs = torch.nn.ModuleList()
+        self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels,
+                                 local_nodes_required_by_other,
+                                 remote_nodes_list,
+                                 remote_nodes_num_from_each_subgraph,
+                                 range_of_remote_nodes_on_local_graph,
+                                 rank,
+                                 num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf))
+        # self.bns = torch.nn.ModuleList()
+        # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
+        for _ in range(num_layers - 2):
+            self.convs.append(
+                DistSAGEConvGrad(hidden_channels, hidden_channels,
+                                 local_nodes_required_by_other,
+                                 remote_nodes_list,
+                                 remote_nodes_num_from_each_subgraph,
+                                 range_of_remote_nodes_on_local_graph,
+                                 rank,
+                                 num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf))
+            # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
+        self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels,
+                                 local_nodes_required_by_other,
+                                 remote_nodes_list,
+                                 remote_nodes_num_from_each_subgraph,
+                                 range_of_remote_nodes_on_local_graph,
+                                 rank,
+                                 num_part,
+                                 send_nodes_feat_buf,
+                                 recv_nodes_feat_buf))
 
         self.dropout = dropout
 
@@ -491,6 +597,11 @@ def transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, n
     # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes)).to_symmetric()
     # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
     # remote_edges_list = SparseTensor(row=remote_edges_list[1], col=remote_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
+    '''
+    local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=torch.ones(local_edges_list[1].size(0), dtype=torch.float32), sparse_sizes=(num_local_nodes, num_local_nodes))
+    tmp_col = remote_edges_list[0] - num_local_nodes
+    remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=torch.ones(remote_edges_list[1].size(0), dtype=torch.float32), sparse_sizes=(num_local_nodes, num_remote_nodes))
+    '''
     local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes))
     tmp_col = remote_edges_list[0] - num_local_nodes
     remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=None, sparse_sizes=(num_local_nodes, num_remote_nodes))
@@ -681,6 +792,15 @@ if __name__ == "__main__":
                             rank,
                             world_size,
                             cached).to(device)
+
+    '''
+    model = DistSAGEGrad(local_nodes_required_by_other,
+                            remote_nodes_list,
+                            remote_nodes_num_from_each_subgraph,
+                            range_of_remote_nodes_on_local_graph,
+                            rank,
+                            world_size).to(device)
+    '''
 
     for name, parameters in model.named_parameters():
         print(name, parameters.size())
