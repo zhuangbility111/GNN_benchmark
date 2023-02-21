@@ -66,16 +66,22 @@ class DistGCNGrad(torch.nn.Module):
 '''
 
 class DistGCNGrad(torch.nn.Module):
-    def __init__(self, local_nodes_required_by_other,
+    def __init__(self,
+                 in_channels,
+                 hidden_channels,
+                 out_channels,
+                 local_nodes_required_by_other,
                  remote_nodes_list,
                  remote_nodes_num_from_each_subgraph,
                  range_of_remote_nodes_on_local_graph,
+                 num_local_nodes,
                  rank,
                  num_part,
                  cached):
         super().__init__()
         num_layers = 3
         dropout = 0.5
+        '''
         # ogbn-products
         in_channels = 100
         # ogbn-arxiv
@@ -89,6 +95,7 @@ class DistGCNGrad(torch.nn.Module):
         # out_channels = 40
         # ogbn-papers100M
         # out_channels = 172
+        '''
         cached = True
 
         max_feat_len = max(in_channels, hidden_channels, out_channels)
@@ -176,7 +183,11 @@ class DistGCNGrad(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 
 class DistSAGEGrad(torch.nn.Module):
-    def __init__(self, local_nodes_required_by_other,
+    def __init__(self, 
+                 in_channels,
+                 hidden_channels,
+                 out_channels,
+                 local_nodes_required_by_other,
                  remote_nodes_list,
                  remote_nodes_num_from_each_subgraph,
                  range_of_remote_nodes_on_local_graph,
@@ -185,6 +196,7 @@ class DistSAGEGrad(torch.nn.Module):
         super().__init__()
         num_layers = 3
         dropout = 0.5
+        '''
         # ogbn-products
         in_channels = 100
         # ogbn-arxiv
@@ -198,6 +210,7 @@ class DistSAGEGrad(torch.nn.Module):
         # out_channels = 40
         # ogbn-papers100M
         # out_channels = 172
+        '''
 
         max_feat_len = max(in_channels, hidden_channels, out_channels)
         num_send_nodes = 0
@@ -597,14 +610,14 @@ def transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, n
     # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes)).to_symmetric()
     # local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
     # remote_edges_list = SparseTensor(row=remote_edges_list[1], col=remote_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes + num_remote_nodes))
-    '''
-    local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=torch.ones(local_edges_list[1].size(0), dtype=torch.float32), sparse_sizes=(num_local_nodes, num_local_nodes))
+    local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=torch.ones(local_edges_list[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_local_nodes))
     tmp_col = remote_edges_list[0] - num_local_nodes
-    remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=torch.ones(remote_edges_list[1].size(0), dtype=torch.float32), sparse_sizes=(num_local_nodes, num_remote_nodes))
+    remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=torch.ones(remote_edges_list[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_remote_nodes))
     '''
     local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=None, sparse_sizes=(num_local_nodes, num_local_nodes))
     tmp_col = remote_edges_list[0] - num_local_nodes
     remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=None, sparse_sizes=(num_local_nodes, num_remote_nodes))
+    '''
     # print(local_edges_list)
     # print(remote_edges_list)
     return local_edges_list, remote_edges_list
@@ -711,66 +724,51 @@ def test(model, nodes_feat_list, nodes_label_list, \
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tensor_type', type=str, default='tensor')
-    parser.add_argument('--use_profiler', type=str, default='false')
+    # parser.add_argument('--tensor_type', type=str, default='tensor')
+    # parser.add_argument('--use_profiler', type=str, default='false')
     parser.add_argument('--cached', type=str, default='true')
     parser.add_argument('--graph_name', type=str, default='arxiv')
+    parser.add_argument('--model', type=str, default='gcn')
+    parser.add_argument('--is_async', type=str, default='false')
+
     args = parser.parse_args()
-    tensor_type = args.tensor_type
-    use_profiler = args.use_profiler
-    if args.cached == 'false':
-        cached = False
-    elif args.cached == 'true':
-        cached = True
+    cached = False if args.cached == 'false' else True
+    is_async = True if args.is_async == 'true' else False
+    if is_async == True:
+        torch.set_num_threads(11)
+    else:
+        torch.set_num_threads(12)
+        
     graph_name = args.graph_name
-    graph_name = 'products'
-    # graph_name = 'papers100M'
-    # graph_name = 'pubmed'
+    if graph_name == 'products':
+        in_channels = 100
+        hidden_channels = 256
+        out_channels = 47
+    elif graph_name == 'papers100M':
+        in_channels = 128
+        hidden_channels = 256
+        out_channels = 172
+    elif graph_name == 'arxiv':
+        in_channels = 128
+        hidden_channels = 256
+        out_channels = 40
 
-    # set random seed
-    # setup_seed(3407)
+    model_name = args.model
+    tensor_type = 'sparse_tensor'
 
+    print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
+    print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
+        
     rank, world_size = init_dist_group()
     num_part = world_size
-    torch.set_num_threads(12)
     print("Rank = {}, Number of threads = {}".format(rank, torch.get_num_threads()))
-
-    # dataset = PygNodePropPredDataset(name = 'ogbn-{}'.format(graph_name)) 
 
     # obtain graph information
     local_nodes_list, nodes_feat_list, nodes_label_list, remote_nodes_list, \
         range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph, \
         local_edges_list, remote_edges_list = load_graph_data("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
 
-    '''
-    # compare the number of local nodes and remote nodes
-    print(range_of_remote_nodes_on_local_graph)
-    print(remote_edges_list[0])
-    num_diff_nodes = 0
-    begin_idx = 0
-    end_idx = 0
-    for i in range(num_part):
-        # print(remote_nodes_list[range_of_remote_nodes_on_local_graph[i]: range_of_remote_nodes_on_local_graph[i+1]])
-        begin_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i]]
-        if range_of_remote_nodes_on_local_graph[i] != range_of_remote_nodes_on_local_graph[i+1]:
-            end_idx = remote_nodes_list[range_of_remote_nodes_on_local_graph[i+1]-1]
-        else:
-            end_idx = begin_idx - 1
-        print("begin_idx = {}, end_idx = {}".format(begin_idx, end_idx))
-        idx = ((remote_edges_list[0] >= begin_idx) & (remote_edges_list[0] <= end_idx)).nonzero()
-        diff_src_node = torch.unique(remote_edges_list[0][idx], return_counts=True)[1]
-        diff_dst_node = torch.unique(remote_edges_list[1][idx], return_counts=True)[1]
-        src_res, indices = torch.sort(diff_src_node, descending=True)
-        dst_res, indices = torch.sort(diff_dst_node, descending=True)
-        print("total number of remote src nodes = {}".format(src_res.shape[0]))
-        print("total number of remote dst nodes = {}".format(dst_res.shape[0]))
-        num_diff_nodes += abs(src_res.shape[0] - dst_res.shape[0])
-
-    print("num_diff_nodes = {}".format(num_diff_nodes))
-    '''
-
     # obtain training, validated, testing mask
-    # local_train_mask, local_valid_mask, local_test_mask = remap_dataset_mask(dataset.get_idx_split(), local_nodes_list, rank)
     local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
     # local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./test_level_partition/{}_graph_{}_part/".format(graph_name, num_part), graph_name, rank, world_size)
         
@@ -784,23 +782,28 @@ if __name__ == "__main__":
         local_edges_list, remote_edges_list = transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, local_nodes_list.size(0), remote_nodes_list.size(0))
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # model = GCN(cached).to(device)
-    model = DistGCNGrad(local_nodes_required_by_other,
+    if model_name == 'gcn':
+        model = DistGCNGrad(in_channels,
+                            hidden_channels,
+                            out_channels,
+                            local_nodes_required_by_other,
                             remote_nodes_list,
                             remote_nodes_num_from_each_subgraph,
                             range_of_remote_nodes_on_local_graph,
+                            local_nodes_list.size(0),
                             rank,
                             world_size,
                             cached).to(device)
-
-    '''
-    model = DistSAGEGrad(local_nodes_required_by_other,
-                            remote_nodes_list,
-                            remote_nodes_num_from_each_subgraph,
-                            range_of_remote_nodes_on_local_graph,
-                            rank,
-                            world_size).to(device)
-    '''
+    elif model_name == 'sage':
+        model = DistSAGEGrad(in_channels,
+                             hidden_channels,
+                             out_channels,
+                             local_nodes_required_by_other,
+                             remote_nodes_list,
+                             remote_nodes_num_from_each_subgraph,
+                             range_of_remote_nodes_on_local_graph,
+                             rank,
+                             world_size).to(device)
 
     for name, parameters in model.named_parameters():
         print(name, parameters.size())
