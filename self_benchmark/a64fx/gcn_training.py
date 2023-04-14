@@ -37,7 +37,8 @@ if tensor_type == 'tensor':
     dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 elif tensor_type == 'sparse_tensor':
     print('tensor_type: SparseTensor')
-    transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
+    # transform = T.Compose([T.NormalizeFeatures(), T.ToSparseTensor()])
+    transform = T.Compose([T.ToSparseTensor()])
     # dataset = Planetoid(root='../../data/Cora', name='Cora', transform=transform)
     dataset = Planetoid(root='../../data/PubMed', name='PubMed', transform=transform)
 
@@ -46,7 +47,7 @@ print(dataset.data)
 print('Number of classes:', dataset.num_classes)
 print('Number of edges features:', dataset.num_edge_features)
 print('Number of edges index:', dataset.data.edge_index.shape[1] / 2)
-print('Number of nodes features：', dataset.num_node_features)
+print('Number of nodes features:', dataset.num_node_features)
 print('Number of nodes:', dataset.data.x.shape[0])
 # print(':', dataset.data.x)
 # print(dataset.data.edge_index)
