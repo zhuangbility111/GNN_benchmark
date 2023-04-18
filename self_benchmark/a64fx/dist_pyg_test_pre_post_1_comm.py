@@ -110,11 +110,12 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     # ----------------------------------------------------------
 
     # load features of vertices on subgraph
-    nodes_feat_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
+    # code for loading features is moved to the location before the training loop for saving memory
+    # nodes_feat_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
     # nodes_feat_list = np.array([0,1,2], dtype=np.int64)
-    print("nodes_feat_list.shape:")
-    print(nodes_feat_list.shape)
-    print(nodes_feat_list.dtype)
+    # print("nodes_feat_list.shape:")
+    # print(nodes_feat_list.shape)
+    # print(nodes_feat_list.dtype)
     load_nodes_feats_end = time.perf_counter()
     time_load_nodes_feats = load_nodes_feats_end - load_nodes_end
 
@@ -180,7 +181,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     print("elapsed time of whole process of loading graph(ms) = {}".format(time_load_and_preprocessing_graph * 1000))
     # print("number of remote nodes = {}".format(remote_nodes_list.shape[0]))
 
-    return torch.from_numpy(local_nodes_list), torch.from_numpy(nodes_feat_list), torch.from_numpy(nodes_label_list), \
+    return torch.from_numpy(local_nodes_list), torch.from_numpy(nodes_label_list), \
             torch.from_numpy(local_edges_list), torch.from_numpy(remote_edges_list), \
             torch.from_numpy(begin_node_on_each_subgraph)
 
@@ -427,14 +428,6 @@ def divide_remote_edges_list(begin_node_on_each_subgraph, remote_edges_list, wor
     remote_edges_pre_post_aggr_to = [torch.empty((indices[1]), dtype=torch.int64) for indices in is_pre_post_aggr_to]
     dist.all_to_all(remote_edges_pre_post_aggr_to, remote_edges_pre_post_aggr_from)
 
-    '''
-    print("is_pre_post_aggr, remote_edges_pre_post_aggr:")
-    print(is_pre_post_aggr_from)
-    print(is_pre_post_aggr_to)
-    print(remote_edges_pre_post_aggr_from)
-    print(remote_edges_pre_post_aggr_to)
-    '''
-
     remote_edges_list_pre_post_aggr_to, begin_edge_on_each_partition_to, \
     post_aggr_to_splits, pre_aggr_to_splits = \
         process_remote_edges_pre_post_aggr_to(is_pre_post_aggr_to, remote_edges_pre_post_aggr_to, world_size)
@@ -575,34 +568,54 @@ def test_forward(test_model, graph, feats):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tensor_type', type=str, default='tensor')
-    parser.add_argument('--use_profiler', type=str, default='false')
     parser.add_argument('--cached', type=str, default='true')
     parser.add_argument('--graph_name', type=str, default='arxiv')
-    args = parser.parse_args()
-    tensor_type = args.tensor_type
-    use_profiler = args.use_profiler
-    if args.cached == 'false':
-        cached = False
-    elif args.cached == 'true':
-        cached = True
-    graph_name = args.graph_name
-    # graph_name = 'products'
-    graph_name = 'papers100M'
-    # graph_name = 'arxiv'
-    # graph_name = 'test'
-    # graph_name = 'pubmed'
+    parser.add_argument('--model', type=str, default='sage')
+    parser.add_argument('--is_async', type=str, default='false')
+    parser.add_argument('--input_dir', type=str)
 
+    args = parser.parse_args()
+    cached = False if args.cached == 'false' else True
+    is_async = True if args.is_async == 'true' else False
+    if is_async == True:
+        torch.set_num_threads(11)
+    else:
+        torch.set_num_threads(12)
+        
+    graph_name = args.graph_name
+    input_dir = args.input_dir
+    if graph_name == 'products':
+        in_channels = 100
+        hidden_channels = 256
+        out_channels = 47
+    elif graph_name == 'papers100M':
+        in_channels = 128
+        hidden_channels = 256
+        out_channels = 172
+    elif graph_name == 'arxiv':
+        in_channels = 128
+        hidden_channels = 256
+        out_channels = 40
+    elif graph_name == 'test':
+        in_channels = 2
+        hidden_channels = 8
+        out_channels = 5
+
+    model_name = args.model
+    tensor_type = 'sparse_tensor'
+
+    print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
+    print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
+    print("input_dir = {}".format(input_dir))
+        
     rank, world_size = init_dist_group()
     num_part = world_size
-    # torch.set_num_threads(12)
-    torch.set_num_threads(11)
     print("Rank = {}, Number of threads = {}".format(rank, torch.get_num_threads()))
 
     # obtain graph information
-    local_nodes_list, nodes_feat_list, nodes_label_list, \
+    local_nodes_list, nodes_label_list, \
     local_edges_list, remote_edges_list, begin_node_on_each_subgraph = \
-        load_graph_data("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part),
+        load_graph_data(input_dir,
                         graph_name, 
                         rank, 
                         world_size)
@@ -630,32 +643,6 @@ if __name__ == "__main__":
     for i in range(world_size):
         pre_post_aggr_from_splits.append(pre_aggr_from_splits[i] + post_aggr_from_splits[i])
         pre_post_aggr_to_splits.append(pre_aggr_to_splits[i] + post_aggr_to_splits[i])
-
-    '''
-    print("remote_edges_list_pre_post_aggr_from:")
-    print(remote_edges_list_pre_post_aggr_from)
-    print("remote_edges_list_pre_post_aggr_to:")
-    print(remote_edges_list_pre_post_aggr_to)
-    print("begin_edge_on_each_partition_from:")
-    print(begin_edge_on_each_partition_from)
-    print("begin_edge_on_each_partition_to:")
-    print(begin_edge_on_each_partition_to)
-    print("pre_aggr_from_splits:")
-    print(pre_aggr_from_splits)
-    print("post_aggr_from_splits:")
-    print(post_aggr_from_splits)
-    print("post_aggr_to_splits:")
-    print(post_aggr_to_splits)
-    print("pre_aggr_to_splits:")
-    print(pre_aggr_to_splits)
-    print("pre_post_aggr_from_splits:")
-    print(pre_post_aggr_from_splits)
-    print("pre_post_aggr_to_splits")
-    print(pre_post_aggr_to_splits)
-    print("local_in_degrees:")
-    print(local_in_degrees)
-    '''
-
     transform_remote_edges_begin = time.perf_counter()
     local_adj_t, adj_t_pre_post_aggr_from, adj_t_pre_post_aggr_to = \
         transform_edge_index_to_sparse_tensor(local_edges_list, \
@@ -676,34 +663,16 @@ if __name__ == "__main__":
     del remote_edges_list_pre_post_aggr_to
     gc.collect()
 
-    dir_path = "./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part)
-    nodes_feat_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
+    # load features
+    nodes_feat_list = np.load(os.path.join(input_dir, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
     nodes_feat_list = torch.from_numpy(nodes_feat_list)
+    print("nodes_feat_list.shape:")
+    print(nodes_feat_list.shape)
+    print(nodes_feat_list.dtype)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    '''
-    # ogbn-products
-    input_channels = 100
-    hidden_channels = 256
-    # hidden_channels = 128
-    output_channels = 47
-    '''                                                                         
-    # ogbn-papers100M
-    input_channels = 128
-    hidden_channels = 256
-    # hidden_channels = 128
-    output_channels = 172
-    '''
-    input_channels = 2
-    hidden_channels = 8
-    output_channels = 5
-    # ogbn-arxiv
-    input_channels = 128
-    hidden_channels = 256
-    output_channels = 40
-    '''
 
-    max_size = max(input_channels, hidden_channels, output_channels)
+    max_size = max(in_channels, hidden_channels, out_channels)
     buf_pre_post_aggr_from = torch.zeros((sum(pre_post_aggr_from_splits), max_size), dtype=torch.float32)
     buf_pre_post_aggr_to = torch.zeros((sum(pre_post_aggr_to_splits), max_size), dtype=torch.float32)
     g = DistributedGraphPre(local_adj_t, \
@@ -717,52 +686,14 @@ if __name__ == "__main__":
 
     init_adj_t(g)
 
-    model = DistSAGEGradWithPre(input_channels, hidden_channels, output_channels)
+    model = DistSAGEGradWithPre(in_channels, hidden_channels, out_channels)
     para_model = torch.nn.parallel.DistributedDataParallel(model)
-    # test_forward(para_model, g, nodes_feat_list)
-
-    # test_communication(g, nodes_feat_list)
 
     # obtain training, validated, testing mask
-    local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./ogbn_{}_new/{}_graph_{}_part/".format(graph_name, graph_name, num_part), graph_name, rank, world_size)
+    local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask(input_dir, graph_name, rank, world_size)
+
     optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
-    # optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01, weight_decay=5e-4)
     train(para_model, optimizer, g, nodes_feat_list, nodes_label_list, local_train_mask, rank, world_size)
     test(para_model, g, nodes_feat_list, nodes_label_list, \
          local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
         
-    '''
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DistGCNGrad(local_nodes_required_by_other,
-                            remote_nodes_list,
-                            remote_nodes_num_from_each_subgraph,
-                            range_of_remote_nodes_on_local_graph,
-                            local_nodes_list.size(0),
-                            rank,
-                            world_size,
-                            cached).to(device)
-    '''
-
-    '''
-    model = DistSAGEGrad(local_nodes_required_by_other,
-                            remote_nodes_list,
-                            remote_nodes_num_from_each_subgraph,
-                            range_of_remote_nodes_on_local_graph,
-                            rank,
-                            world_size).to(device)
-    '''
-
-    '''
-    for name, parameters in model.named_parameters():
-        print(name, parameters.size())
-
-    para_model = torch.nn.parallel.DistributedDataParallel(model)
-    optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
-    # optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01, weight_decay=5e-4)
-
-    train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
-          local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
-    test(para_model, nodes_feat_list, nodes_label_list, \
-         local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
-    '''
-
