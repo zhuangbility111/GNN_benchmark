@@ -30,6 +30,7 @@ class DistGCNGrad(torch.nn.Module):
                  hidden_channels,
                  out_channels,
                  local_nodes_required_by_other,
+                 num_local_nodes_required_by_other,
                  remote_nodes_list,
                  remote_nodes_num_from_each_subgraph,
                  range_of_remote_nodes_on_local_graph,
@@ -43,9 +44,7 @@ class DistGCNGrad(torch.nn.Module):
         cached = True
 
         max_feat_len = max(in_channels, hidden_channels, out_channels)
-        num_send_nodes = 0
-        for tmp_tensor in local_nodes_required_by_other:
-            num_send_nodes += tmp_tensor.size(0)
+        num_send_nodes = local_nodes_required_by_other.size(0)
         send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
 
         num_recv_nodes = remote_nodes_list.size(0)
@@ -54,6 +53,7 @@ class DistGCNGrad(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistGCNConvGrad(in_channels, hidden_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -68,6 +68,7 @@ class DistGCNGrad(torch.nn.Module):
             self.convs.append(
                 DistGCNConvGrad(hidden_channels, hidden_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -79,6 +80,7 @@ class DistGCNGrad(torch.nn.Module):
             # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
         self.convs.append(DistGCNConvGrad(hidden_channels, out_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -132,6 +134,7 @@ class DistSAGEGrad(torch.nn.Module):
                  hidden_channels,
                  out_channels,
                  local_nodes_required_by_other,
+                 num_local_nodes_required_by_other,
                  remote_nodes_list,
                  remote_nodes_num_from_each_subgraph,
                  range_of_remote_nodes_on_local_graph,
@@ -142,9 +145,7 @@ class DistSAGEGrad(torch.nn.Module):
         dropout = 0.5
 
         max_feat_len = max(in_channels, hidden_channels, out_channels)
-        num_send_nodes = 0
-        for tmp_tensor in local_nodes_required_by_other:
-            num_send_nodes += tmp_tensor.size(0)
+        num_send_nodes = local_nodes_required_by_other.size(0)
         send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
 
         num_recv_nodes = remote_nodes_list.size(0)
@@ -153,6 +154,7 @@ class DistSAGEGrad(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -166,6 +168,7 @@ class DistSAGEGrad(torch.nn.Module):
             self.convs.append(
                 DistSAGEConvGrad(hidden_channels, hidden_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -176,6 +179,7 @@ class DistSAGEGrad(torch.nn.Module):
             # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
         self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels,
                                  local_nodes_required_by_other,
+                                 num_local_nodes_required_by_other,
                                  remote_nodes_list,
                                  remote_nodes_num_from_each_subgraph,
                                  range_of_remote_nodes_on_local_graph,
@@ -475,6 +479,7 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     recv_num_nodes = [torch.zeros(1, dtype=torch.int64) for i in range(world_size)]
     dist.all_to_all(recv_num_nodes, send_num_nodes)
     num_local_nodes_required_by_other = recv_num_nodes
+    num_local_nodes_required_by_other = torch.cat(num_local_nodes_required_by_other, dim=0)
     obtain_number_remote_nodes_end = time.perf_counter()
     print("elapsed time of obtaining number of remote nodes(ms) = {}".format( \
             (obtain_number_remote_nodes_end - obtain_number_remote_nodes_start) * 1000))
@@ -488,6 +493,7 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     dist.all_to_all(recv_nodes_list, send_nodes_list)
     local_node_idx_begin = local_nodes_list[0][0]
     local_nodes_required_by_other = [i - local_node_idx_begin for i in recv_nodes_list]
+    local_nodes_required_by_other = torch.cat(local_nodes_required_by_other, dim=0)
     obtain_remote_nodes_list_end = time.perf_counter()
     print("elapsed time of obtaining list of remote nodes(ms) = {}".format( \
             (obtain_remote_nodes_list_end - obtain_remote_nodes_list_start) * 1000))
@@ -660,6 +666,7 @@ if __name__ == "__main__":
                             hidden_channels,
                             out_channels,
                             local_nodes_required_by_other,
+                            num_local_nodes_required_by_other,
                             remote_nodes_list,
                             remote_nodes_num_from_each_subgraph,
                             range_of_remote_nodes_on_local_graph,
@@ -672,6 +679,7 @@ if __name__ == "__main__":
                              hidden_channels,
                              out_channels,
                              local_nodes_required_by_other,
+                             num_local_nodes_required_by_other,
                              remote_nodes_list,
                              remote_nodes_num_from_each_subgraph,
                              range_of_remote_nodes_on_local_graph,
