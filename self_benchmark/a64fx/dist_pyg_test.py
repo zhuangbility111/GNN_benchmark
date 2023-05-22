@@ -634,6 +634,9 @@ if __name__ == "__main__":
     model_name = args.model
     tensor_type = 'sparse_tensor'
 
+    # setup seed
+    setup_seed(0)
+
     print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
     print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
     print("input_dir = {}".format(input_dir))
