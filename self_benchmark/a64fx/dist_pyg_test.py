@@ -16,6 +16,10 @@ import random
 
 import psutil
 
+try:
+    import torch_ccl
+except ImportError as e:
+    print(e)
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -420,12 +424,15 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     # local_edges_list, remote_edges_list = divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end)
     local_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_local_edges.npy".format(rank, graph_name)))
     remote_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_remote_edges.npy".format(rank, graph_name)))
+    '''
     print(local_edges_list)
     print(local_edges_list.shape)
     print(local_edges_list.dtype)
     print(remote_edges_list)
     print(remote_edges_list.shape)
     print(remote_edges_list.dtype)
+    '''
+    print(local_edges_list)
     divide_edges_list_end = time.perf_counter()
     time_divide_edges_list = divide_edges_list_end - load_number_nodes_end
 
@@ -443,6 +450,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
 
     time_load_and_preprocessing_graph = obtain_remote_nodes_list_end - load_nodes_start
 
+    '''
     print("elapsed time of loading nodes(ms) = {}".format(time_load_nodes * 1000))
     print("elapsed time of loading nodes feats(ms) = {}".format(time_load_nodes_feats * 1000))
     print("elapsed time of loading nodes labels(ms) = {}".format(time_load_nodes_labels * 1000))
@@ -453,6 +461,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     print("elapsed time of obtaining remote nodes(ms) = {}".format(time_obtain_remote_nodes_list * 1000))
     print("elapsed time of whole process of loading graph(ms) = {}".format(time_load_and_preprocessing_graph * 1000))
     print("number of remote nodes = {}".format(remote_nodes_list.shape[0]))
+    '''
 
     return torch.from_numpy(local_nodes_list), torch.from_numpy(nodes_feat_list), \
            torch.from_numpy(nodes_label_list), torch.from_numpy(remote_nodes_list), \
@@ -463,6 +472,15 @@ def init_dist_group():
     if dist.is_mpi_available():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
+    else:
+        world_size = int(os.environ.get("PMI_SIZE", -1))
+        rank = int(os.environ.get("PMI_RANK", -1))
+        print("PMI_SIZE = {}".format(world_size))
+        print("PMI_RANK = {}".format(rank))
+        print("use ccl backend for torch.distributed package on x86 cpu.")
+        dist_url = "env://"
+        dist.init_process_group(backend="ccl", init_method="env://", 
+                                world_size=world_size, rank=rank)
     assert torch.distributed.is_initialized()
     print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
     # number of process in this MPI group
@@ -608,14 +626,19 @@ if __name__ == "__main__":
     parser.add_argument('--is_async', type=str, default='false')
     parser.add_argument('--input_dir', type=str)
 
+    setup_seed(0)
+
     args = parser.parse_args()
     cached = False if args.cached == 'false' else True
     is_async = True if args.is_async == 'true' else False
     input_dir = args.input_dir
+
+    '''
     if is_async == True:
         torch.set_num_threads(11)
     else:
         torch.set_num_threads(12)
+    '''
         
     graph_name = args.graph_name
     if graph_name == 'products':
@@ -650,7 +673,7 @@ if __name__ == "__main__":
     # obtain training, validated, testing mask
     local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask(input_dir, graph_name, rank, world_size)
     # local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./test_level_partition/{}_graph_{}_part/".format(graph_name, num_part), graph_name, rank, world_size)
-        
+
     # obtain the idx of local nodes required by other subgraph
     local_nodes_required_by_other, num_local_nodes_required_by_other = \
         obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -660,6 +683,7 @@ if __name__ == "__main__":
     if tensor_type == 'sparse_tensor':
         local_edges_list, remote_edges_list = transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, local_nodes_list.size(0), remote_nodes_list.size(0))
     
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if model_name == 'gcn':
         model = DistGCNGrad(in_channels,
