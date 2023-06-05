@@ -607,11 +607,14 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='gcn')
     parser.add_argument('--is_async', type=str, default='false')
     parser.add_argument('--input_dir', type=str)
+    parser.add_argument('--random_seed', type=int, default=-1)
 
     args = parser.parse_args()
     cached = False if args.cached == 'false' else True
     is_async = True if args.is_async == 'true' else False
     input_dir = args.input_dir
+    random_seed = args.random_seed
+
     if is_async == True:
         torch.set_num_threads(11)
     else:
@@ -635,7 +638,8 @@ if __name__ == "__main__":
     tensor_type = 'sparse_tensor'
 
     # setup seed
-    setup_seed(0)
+    if random_seed != -1:
+        setup_seed(random_seed)
 
     print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
     print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
