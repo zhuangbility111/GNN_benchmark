@@ -28,6 +28,23 @@ def setup_seed(seed):
     random.seed(seed)
     # torch.backends.cudnn.deterministic = True
 
+def create_comm_buffer(in_channels, hidden_channels, out_channels, local_nodes_required_by_other, remote_nodes_list, is_fp16=False):
+    max_feat_len = max(in_channels, hidden_channels, out_channels)
+
+    num_send_nodes = local_nodes_required_by_other.size(0)
+    send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
+    send_nodes_feat_buf_fp16 = None
+    if is_fp16:
+        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float16)
+
+    num_recv_nodes = remote_nodes_list.size(0)
+    recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+    recv_nodes_feat_buf_fp16 = None
+    if is_fp16:
+        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float16)
+
+    return send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16
+
 class DistGCNGrad(torch.nn.Module):
     def __init__(self,
                  in_channels,
@@ -47,12 +64,8 @@ class DistGCNGrad(torch.nn.Module):
         dropout = 0.5
         cached = True
 
-        max_feat_len = max(in_channels, hidden_channels, out_channels)
-        num_send_nodes = local_nodes_required_by_other.size(0)
-        send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
-
-        num_recv_nodes = remote_nodes_list.size(0)
-        recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+        send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16 = \
+            create_comm_buffer(in_channels, hidden_channels, out_channels, local_nodes_required_by_other, remote_nodes_list)
 
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistGCNConvGrad(in_channels, hidden_channels,
@@ -143,17 +156,14 @@ class DistSAGEGrad(torch.nn.Module):
                  remote_nodes_num_from_each_subgraph,
                  range_of_remote_nodes_on_local_graph,
                  rank,
-                 num_part):
+                 num_part,
+                 is_fp16=False):
         super().__init__()
         num_layers = 3
         dropout = 0.5
 
-        max_feat_len = max(in_channels, hidden_channels, out_channels)
-        num_send_nodes = local_nodes_required_by_other.size(0)
-        send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
-
-        num_recv_nodes = remote_nodes_list.size(0)
-        recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+        send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16 = \
+            create_comm_buffer(in_channels, hidden_channels, out_channels, local_nodes_required_by_other, remote_nodes_list, is_fp16)
 
         self.convs = torch.nn.ModuleList()
         self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels,
@@ -165,7 +175,9 @@ class DistSAGEGrad(torch.nn.Module):
                                  rank,
                                  num_part,
                                  send_nodes_feat_buf,
-                                 recv_nodes_feat_buf))
+                                 recv_nodes_feat_buf,
+                                 send_nodes_feat_buf_fp16,
+                                 recv_nodes_feat_buf_fp16))
         # self.bns = torch.nn.ModuleList()
         # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
         for _ in range(num_layers - 2):
@@ -179,7 +191,9 @@ class DistSAGEGrad(torch.nn.Module):
                                  rank,
                                  num_part,
                                  send_nodes_feat_buf,
-                                 recv_nodes_feat_buf))
+                                 recv_nodes_feat_buf,
+                                 send_nodes_feat_buf_fp16,
+                                 recv_nodes_feat_buf_fp16))
             # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
         self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels,
                                  local_nodes_required_by_other,
@@ -190,7 +204,9 @@ class DistSAGEGrad(torch.nn.Module):
                                  rank,
                                  num_part,
                                  send_nodes_feat_buf,
-                                 recv_nodes_feat_buf))
+                                 recv_nodes_feat_buf,
+                                 send_nodes_feat_buf_fp16,
+                                 recv_nodes_feat_buf_fp16))
 
         self.dropout = dropout
 
@@ -532,7 +548,7 @@ def transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, n
     return local_edges_list, remote_edges_list
 
 def train(model, optimizer, nodes_feat_list, nodes_label_list, 
-          local_edges_list, remote_edges_list, local_train_mask, rank, world_size):
+          local_edges_list, remote_edges_list, local_train_mask, num_epochs, rank, world_size):
     # start training
     start = time.perf_counter()
     total_forward_dur = 0
@@ -541,7 +557,7 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
     total_update_weight_dur = 0
 
     model.train()
-    for epoch in range(200):
+    for epoch in range(num_epochs):
         optimizer.zero_grad()
         forward_start = time.perf_counter()
         if tensor_type == 'tensor':
@@ -625,6 +641,9 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='gcn')
     parser.add_argument('--is_async', type=str, default='false')
     parser.add_argument('--input_dir', type=str)
+    parser.add_argument('--random_seed', type=int, default=-1)
+    parser.add_argument('--num_epochs', type=int, default=200)
+    parser.add_argument('--is_fp16', type=str, default='false')
 
     setup_seed(0)
 
@@ -632,6 +651,10 @@ if __name__ == "__main__":
     cached = False if args.cached == 'false' else True
     is_async = True if args.is_async == 'true' else False
     input_dir = args.input_dir
+
+    random_seed = args.random_seed
+    num_epochs = args.num_epochs
+    is_fp16 = True if args.is_fp16 == 'true' else False
 
     '''
     if is_async == True:
@@ -657,8 +680,12 @@ if __name__ == "__main__":
     model_name = args.model
     tensor_type = 'sparse_tensor'
 
-    print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
-    print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
+    # setup seed
+    if random_seed != -1:
+        setup_seed(random_seed)
+
+    print("graph_name = {}, model_name = {}, is_async = {}, is_fp16 = {}".format(graph_name, model_name, is_async, is_fp16))
+    print("num_epochs = {}, in_channels = {}, hidden_channels = {}, out_channels = {}".format(num_epochs, in_channels, hidden_channels, out_channels))
     print("input_dir = {}".format(input_dir))
         
     rank, world_size = init_dist_group()
@@ -708,7 +735,8 @@ if __name__ == "__main__":
                              remote_nodes_num_from_each_subgraph,
                              range_of_remote_nodes_on_local_graph,
                              rank,
-                             world_size).to(device)
+                             world_size,
+                             is_fp16).to(device)
 
     for name, parameters in model.named_parameters():
         print(name, parameters.size())
@@ -720,7 +748,7 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
 
     train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
-          local_edges_list, remote_edges_list, local_train_mask, rank, world_size)
+          local_edges_list, remote_edges_list, local_train_mask, num_epochs, rank, world_size)
     test(para_model, nodes_feat_list, nodes_label_list, \
          local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
 

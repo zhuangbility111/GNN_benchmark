@@ -11,7 +11,9 @@ source ~/gnn/gnn/pytorch/config_env.sh
 graph_name="products"
 dir_stdout="../log/ogbn_${graph_name}_log/${PJM_MPI_PROC}proc/"
 input_dir="../dataset/ogbn_${graph_name}_new/${graph_name}_graph_${PJM_MPI_PROC}_part/"
+random_seed=0
+is_fp16=false
 
-LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}0/stdout -stderr-proc ${dir_stdout}0/stderr python ../dist_pyg_test.py --graph_name=${graph_name} --model=gcn --is_async=false --input_dir=${input_dir}
-LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}1/stdout -stderr-proc ${dir_stdout}1/stderr python ../dist_pyg_test.py --graph_name=${graph_name} --model=sage --is_async=true --input_dir=${input_dir}
-LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}2/stdout -stderr-proc ${dir_stdout}2/stderr python ../dist_pyg_test_pre_post_1_comm.py --graph_name=${graph_name} --model=sage --is_async=true --input_dir=${input_dir}
+# LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}0/stdout -stderr-proc ${dir_stdout}0/stderr python ../dist_pyg_test.py --graph_name=${graph_name} --model=gcn --is_async=false --input_dir=${input_dir}
+LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}5/stdout -stderr-proc ${dir_stdout}5/stderr python ../dist_pyg_test.py --graph_name=${graph_name} --model=sage --is_async=true --input_dir=${input_dir} --random_seed=${random_seed} --is_fp16=${is_fp16}
+# LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}2/stdout -stderr-proc ${dir_stdout}2/stderr python ../dist_pyg_test_pre_post_1_comm.py --graph_name=${graph_name} --model=sage --is_async=true --input_dir=${input_dir}
