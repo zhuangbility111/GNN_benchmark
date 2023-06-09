@@ -1,0 +1,94 @@
+[0] OMP: Info #155: KMP_AFFINITY: Initial OS proc set respected: 2-19
+[0] OMP: Info #216: KMP_AFFINITY: decoding x2APIC ids.
+[0] OMP: Info #157: KMP_AFFINITY: 18 available OS procs
+[0] OMP: Info #158: KMP_AFFINITY: Uniform topology
+[0] OMP: Info #287: KMP_AFFINITY: topology layer "LL cache" is equivalent to "socket".
+[0] OMP: Info #287: KMP_AFFINITY: topology layer "L3 cache" is equivalent to "socket".
+[0] OMP: Info #287: KMP_AFFINITY: topology layer "L2 cache" is equivalent to "core".
+[0] OMP: Info #287: KMP_AFFINITY: topology layer "L1 cache" is equivalent to "core".
+[0] OMP: Info #192: KMP_AFFINITY: 1 socket x 18 cores/socket x 1 thread/core (18 total cores)
+[0] OMP: Info #218: KMP_AFFINITY: OS proc to physical thread map:
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 2 maps to socket 0 core 2 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 3 maps to socket 0 core 3 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 4 maps to socket 0 core 4 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 5 maps to socket 0 core 8 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 6 maps to socket 0 core 9 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 7 maps to socket 0 core 10 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 8 maps to socket 0 core 11 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 9 maps to socket 0 core 12 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 10 maps to socket 0 core 16 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 11 maps to socket 0 core 17 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 12 maps to socket 0 core 18 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 13 maps to socket 0 core 19 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 14 maps to socket 0 core 20 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 15 maps to socket 0 core 24 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 16 maps to socket 0 core 25 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 17 maps to socket 0 core 26 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 18 maps to socket 0 core 27 thread 0 
+[0] OMP: Info #172: KMP_AFFINITY: OS proc 19 maps to socket 0 core 28 thread 0 
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 952551 thread 0 bound to OS proc set 2
+[1] OMP: Info #155: KMP_AFFINITY: Initial OS proc set respected: 2-19
+[1] OMP: Info #216: KMP_AFFINITY: decoding x2APIC ids.
+[1] OMP: Info #157: KMP_AFFINITY: 18 available OS procs
+[1] OMP: Info #158: KMP_AFFINITY: Uniform topology
+[1] OMP: Info #287: KMP_AFFINITY: topology layer "LL cache" is equivalent to "socket".
+[1] OMP: Info #287: KMP_AFFINITY: topology layer "L3 cache" is equivalent to "socket".
+[1] OMP: Info #287: KMP_AFFINITY: topology layer "L2 cache" is equivalent to "core".
+[1] OMP: Info #287: KMP_AFFINITY: topology layer "L1 cache" is equivalent to "core".
+[1] OMP: Info #192: KMP_AFFINITY: 1 socket x 18 cores/socket x 1 thread/core (18 total cores)
+[1] OMP: Info #218: KMP_AFFINITY: OS proc to physical thread map:
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 2 maps to socket 0 core 2 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 3 maps to socket 0 core 3 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 4 maps to socket 0 core 4 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 5 maps to socket 0 core 8 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 6 maps to socket 0 core 9 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 7 maps to socket 0 core 10 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 8 maps to socket 0 core 11 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 9 maps to socket 0 core 12 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 10 maps to socket 0 core 16 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 11 maps to socket 0 core 17 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 12 maps to socket 0 core 18 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 13 maps to socket 0 core 19 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 14 maps to socket 0 core 20 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 15 maps to socket 0 core 24 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 16 maps to socket 0 core 25 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 17 maps to socket 0 core 26 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 18 maps to socket 0 core 27 thread 0 
+[1] OMP: Info #172: KMP_AFFINITY: OS proc 19 maps to socket 0 core 28 thread 0 
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2411503 thread 0 bound to OS proc set 2
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953615 thread 1 bound to OS proc set 3
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953616 thread 2 bound to OS proc set 4
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953617 thread 3 bound to OS proc set 5
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953619 thread 5 bound to OS proc set 7
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953618 thread 4 bound to OS proc set 6
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953620 thread 6 bound to OS proc set 8
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953621 thread 7 bound to OS proc set 9
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953622 thread 8 bound to OS proc set 10
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953623 thread 9 bound to OS proc set 11
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953624 thread 10 bound to OS proc set 12
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953626 thread 12 bound to OS proc set 14
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953625 thread 11 bound to OS proc set 13
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953627 thread 13 bound to OS proc set 15
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953628 thread 14 bound to OS proc set 16
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953629 thread 15 bound to OS proc set 17
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953630 thread 16 bound to OS proc set 18
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953631 thread 17 bound to OS proc set 19
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412620 thread 1 bound to OS proc set 3
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412621 thread 2 bound to OS proc set 4
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412622 thread 3 bound to OS proc set 5
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412623 thread 4 bound to OS proc set 6
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412625 thread 6 bound to OS proc set 8
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412624 thread 5 bound to OS proc set 7
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412626 thread 7 bound to OS proc set 9
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412627 thread 8 bound to OS proc set 10
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412629 thread 10 bound to OS proc set 12
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412628 thread 9 bound to OS proc set 11
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412630 thread 11 bound to OS proc set 13
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412631 thread 12 bound to OS proc set 14
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412632 thread 13 bound to OS proc set 15
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412633 thread 14 bound to OS proc set 16
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412635 thread 16 bound to OS proc set 18
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412634 thread 15 bound to OS proc set 17
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412636 thread 17 bound to OS proc set 19
+[1] OMP: Info #254: KMP_AFFINITY: pid 2411503 tid 2412643 thread 18 bound to OS proc set 2
+[0] OMP: Info #254: KMP_AFFINITY: pid 952551 tid 953726 thread 18 bound to OS proc set 2
