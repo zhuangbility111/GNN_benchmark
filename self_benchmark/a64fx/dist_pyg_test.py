@@ -599,11 +599,12 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
     dist.reduce(total_training_dur, 0, op=dist.ReduceOp.SUM)
 
     print("training end.")
-    print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
-    print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
-    print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
-    print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
-    print("total_training_time(ms): {}".format(total_training_dur[0] / float(world_size) * 1000))
+    if rank == 0:
+        print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
+        print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
+        print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
+        print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
+        print("total_training_time(ms): {}".format(total_training_dur[0] / float(world_size) * 1000))
 
 def test(model, nodes_feat_list, nodes_label_list, \
          local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size):
@@ -616,7 +617,11 @@ def test(model, nodes_feat_list, nodes_label_list, \
         print("sparse_tensor test!")
         out, accs = model(nodes_feat_list, local_edges_list, remote_edges_list), []
     for mask in (local_train_mask, local_valid_mask, local_test_mask):
-        num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        if mask.size(0) != 0:
+            num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        else:
+            num_correct_data = 0
+
         num_data = mask.size(0)
         print("local num_correct_data = {}, local num_entire_dataset = {}".format(num_correct_data, num_data))
         predict_result.append(num_correct_data) 
