@@ -8,7 +8,8 @@
 # h_rt is the maximum time, that our module will run at 
 #         the run time of our module should be less than this value#         the format h_rt is Hour:Minute:Second
 
-source ~/gcn.work/dgl_intel_setting_1/env.sh
+# source ~/gcn.work/dgl_intel_setting_1/env.sh
+source source ~/gcn.work/dgl_intel_setting_1/env_torch_1.10.0.sh
 source /etc/profile.d/modules.sh
 # source ~/gcn.work/dgl_intel_setting_1/sub407/miniconda3/bin/activate sub407
 
