@@ -16,6 +16,10 @@ import random
 
 import psutil
 
+try:
+    import torch_ccl
+except ImportError as e:
+    print(e)
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -187,7 +191,7 @@ class DistSAGEGrad(torch.nn.Module):
                                  rank,
                                  num_part,
                                  send_nodes_feat_buf,
-                                 recv_nodes_feat_buf, 
+                                 recv_nodes_feat_buf,
                                  send_nodes_feat_buf_fp16,
                                  recv_nodes_feat_buf_fp16))
             # self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
@@ -200,7 +204,7 @@ class DistSAGEGrad(torch.nn.Module):
                                  rank,
                                  num_part,
                                  send_nodes_feat_buf,
-                                 recv_nodes_feat_buf, 
+                                 recv_nodes_feat_buf,
                                  send_nodes_feat_buf_fp16,
                                  recv_nodes_feat_buf_fp16))
 
@@ -436,12 +440,15 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     # local_edges_list, remote_edges_list = divide_edges_into_local_and_remote(edges_list, node_idx_begin, node_idx_end)
     local_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_local_edges.npy".format(rank, graph_name)))
     remote_edges_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_remote_edges.npy".format(rank, graph_name)))
+    '''
     print(local_edges_list)
     print(local_edges_list.shape)
     print(local_edges_list.dtype)
     print(remote_edges_list)
     print(remote_edges_list.shape)
     print(remote_edges_list.dtype)
+    '''
+    print(local_edges_list)
     divide_edges_list_end = time.perf_counter()
     time_divide_edges_list = divide_edges_list_end - load_number_nodes_end
 
@@ -459,6 +466,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
 
     time_load_and_preprocessing_graph = obtain_remote_nodes_list_end - load_nodes_start
 
+    '''
     print("elapsed time of loading nodes(ms) = {}".format(time_load_nodes * 1000))
     print("elapsed time of loading nodes feats(ms) = {}".format(time_load_nodes_feats * 1000))
     print("elapsed time of loading nodes labels(ms) = {}".format(time_load_nodes_labels * 1000))
@@ -469,6 +477,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     print("elapsed time of obtaining remote nodes(ms) = {}".format(time_obtain_remote_nodes_list * 1000))
     print("elapsed time of whole process of loading graph(ms) = {}".format(time_load_and_preprocessing_graph * 1000))
     print("number of remote nodes = {}".format(remote_nodes_list.shape[0]))
+    '''
 
     return torch.from_numpy(local_nodes_list), torch.from_numpy(nodes_feat_list), \
            torch.from_numpy(nodes_label_list), torch.from_numpy(remote_nodes_list), \
@@ -476,15 +485,28 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
            torch.from_numpy(local_edges_list), torch.from_numpy(remote_edges_list)
 
 def init_dist_group():
+    '''
     if dist.is_mpi_available():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
+    else:
+        world_size = int(os.environ.get("PMI_SIZE", -1))
+        rank = int(os.environ.get("PMI_RANK", -1))
+        print("PMI_SIZE = {}".format(world_size))
+        print("PMI_RANK = {}".format(rank))
+        print("use ccl backend for torch.distributed package on x86 cpu.")
+        dist_url = "env://"
+        dist.init_process_group(backend="ccl", init_method="env://", 
+                                world_size=world_size, rank=rank)
     assert torch.distributed.is_initialized()
     print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
     # number of process in this MPI group
     world_size = dist.get_world_size() 
     # mpi rank in this MPI group
     rank = dist.get_rank()
+    '''
+    world_size = 1
+    rank = 0
     return (rank, world_size)
 
 def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -493,7 +515,8 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     obtain_number_remote_nodes_start = time.perf_counter()
     send_num_nodes = [torch.tensor([remote_nodes_num_from_each_subgraph[i]], dtype=torch.int64) for i in range(world_size)]
     recv_num_nodes = [torch.zeros(1, dtype=torch.int64) for i in range(world_size)]
-    dist.all_to_all(recv_num_nodes, send_num_nodes)
+    if world_size != 1:
+        dist.all_to_all(recv_num_nodes, send_num_nodes)
     num_local_nodes_required_by_other = recv_num_nodes
     num_local_nodes_required_by_other = torch.cat(num_local_nodes_required_by_other, dim=0)
     obtain_number_remote_nodes_end = time.perf_counter()
@@ -506,7 +529,8 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     send_nodes_list = [remote_nodes_list[range_of_remote_nodes_on_local_graph[i]: \
                        range_of_remote_nodes_on_local_graph[i+1]] for i in range(world_size)]
     recv_nodes_list = [torch.zeros(num_local_nodes_required_by_other[i], dtype=torch.int64) for i in range(world_size)]
-    dist.all_to_all(recv_nodes_list, send_nodes_list)
+    if world_size != 1:
+        dist.all_to_all(recv_nodes_list, send_nodes_list)
     local_node_idx_begin = local_nodes_list[0][0]
     local_nodes_required_by_other = [i - local_node_idx_begin for i in recv_nodes_list]
     local_nodes_required_by_other = torch.cat(local_nodes_required_by_other, dim=0)
@@ -565,6 +589,8 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
         total_backward_dur += share_grad_start - backward_start
         total_share_grad_dur += update_weight_start - share_grad_start
         total_update_weight_dur += update_weight_end - update_weight_start
+        if rank == 0:
+            print("Epoch: {} time: {:0.4} sec".format(epoch, (update_weight_end - forward_start)))
     end = time.perf_counter()
     total_training_dur = (end - start)
     
@@ -574,18 +600,20 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
     total_update_weight_dur = torch.tensor([total_update_weight_dur])
     total_training_dur = torch.tensor([total_training_dur])
 
-    dist.reduce(total_forward_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_backward_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_share_grad_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_update_weight_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_training_dur, 0, op=dist.ReduceOp.SUM)
+    if world_size != 1:
+        dist.reduce(total_forward_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_backward_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_share_grad_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_update_weight_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_training_dur, 0, op=dist.ReduceOp.SUM)
 
     print("training end.")
-    print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
-    print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
-    print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
-    print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
-    print("total_training_time(ms): {}".format(total_training_dur[0] / float(world_size) * 1000))
+    if rank == 0:
+        print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
+        print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
+        print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
+        print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
+        print("total_training_time(ms): {}".format(total_training_dur[0] / float(world_size) * 1000))
 
 def test(model, nodes_feat_list, nodes_label_list, \
          local_edges_list, remote_edges_list, local_train_mask, local_valid_mask, local_test_mask, rank, world_size):
@@ -598,13 +626,18 @@ def test(model, nodes_feat_list, nodes_label_list, \
         print("sparse_tensor test!")
         out, accs = model(nodes_feat_list, local_edges_list, remote_edges_list), []
     for mask in (local_train_mask, local_valid_mask, local_test_mask):
-        num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        if mask.size(0) != 0:
+            num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        else:
+            num_correct_data = 0
+
         num_data = mask.size(0)
         print("local num_correct_data = {}, local num_entire_dataset = {}".format(num_correct_data, num_data))
         predict_result.append(num_correct_data) 
         predict_result.append(num_data)
     predict_result = torch.tensor(predict_result)
-    dist.reduce(predict_result, 0, op=dist.ReduceOp.SUM)
+    if world_size != 1:
+        dist.reduce(predict_result, 0, op=dist.ReduceOp.SUM)
 
     if rank == 0:
         train_acc = float(predict_result[0] / predict_result[1])
@@ -627,18 +660,23 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--is_fp16', type=str, default='false')
 
+    setup_seed(0)
+
     args = parser.parse_args()
     cached = False if args.cached == 'false' else True
     is_async = True if args.is_async == 'true' else False
     input_dir = args.input_dir
+
     random_seed = args.random_seed
     num_epochs = args.num_epochs
     is_fp16 = True if args.is_fp16 == 'true' else False
 
+    '''
     if is_async == True:
         torch.set_num_threads(11)
     else:
         torch.set_num_threads(12)
+    '''
         
     graph_name = args.graph_name
     if graph_name == 'products':
@@ -677,7 +715,7 @@ if __name__ == "__main__":
     # obtain training, validated, testing mask
     local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask(input_dir, graph_name, rank, world_size)
     # local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask("./test_level_partition/{}_graph_{}_part/".format(graph_name, num_part), graph_name, rank, world_size)
-        
+
     # obtain the idx of local nodes required by other subgraph
     local_nodes_required_by_other, num_local_nodes_required_by_other = \
         obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -687,6 +725,7 @@ if __name__ == "__main__":
     if tensor_type == 'sparse_tensor':
         local_edges_list, remote_edges_list = transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, local_nodes_list.size(0), remote_nodes_list.size(0))
     
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if model_name == 'gcn':
         model = DistGCNGrad(in_channels,
@@ -720,7 +759,11 @@ if __name__ == "__main__":
     # DDP should synchronize between GPUs when doing batchnorm
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    para_model = torch.nn.parallel.DistributedDataParallel(model)
+    if world_size != 1:
+        para_model = torch.nn.parallel.DistributedDataParallel(model)
+    else:
+        para_model = model
+
     optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
 
     train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
