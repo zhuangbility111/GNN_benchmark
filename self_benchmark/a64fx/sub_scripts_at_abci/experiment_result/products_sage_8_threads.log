@@ -1,0 +1,556 @@
+OMP: Info #155: KMP_AFFINITY: Initial OS proc set respected: 0-19,40-59
+OMP: Info #216: KMP_AFFINITY: decoding x2APIC ids.
+OMP: Info #157: KMP_AFFINITY: 40 available OS procs
+OMP: Info #158: KMP_AFFINITY: Uniform topology
+OMP: Info #287: KMP_AFFINITY: topology layer "LL cache" is equivalent to "socket".
+OMP: Info #287: KMP_AFFINITY: topology layer "L3 cache" is equivalent to "socket".
+OMP: Info #287: KMP_AFFINITY: topology layer "L2 cache" is equivalent to "core".
+OMP: Info #287: KMP_AFFINITY: topology layer "L1 cache" is equivalent to "core".
+OMP: Info #192: KMP_AFFINITY: 1 socket x 20 cores/socket x 2 threads/core (20 total cores)
+OMP: Info #218: KMP_AFFINITY: OS proc to physical thread map:
+OMP: Info #172: KMP_AFFINITY: OS proc 0 maps to socket 0 core 0 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 40 maps to socket 0 core 0 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 1 maps to socket 0 core 1 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 41 maps to socket 0 core 1 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 2 maps to socket 0 core 2 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 42 maps to socket 0 core 2 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 3 maps to socket 0 core 3 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 43 maps to socket 0 core 3 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 4 maps to socket 0 core 4 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 44 maps to socket 0 core 4 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 5 maps to socket 0 core 8 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 45 maps to socket 0 core 8 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 6 maps to socket 0 core 9 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 46 maps to socket 0 core 9 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 7 maps to socket 0 core 10 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 47 maps to socket 0 core 10 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 8 maps to socket 0 core 11 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 48 maps to socket 0 core 11 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 9 maps to socket 0 core 12 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 49 maps to socket 0 core 12 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 10 maps to socket 0 core 16 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 50 maps to socket 0 core 16 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 11 maps to socket 0 core 17 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 51 maps to socket 0 core 17 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 12 maps to socket 0 core 18 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 52 maps to socket 0 core 18 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 13 maps to socket 0 core 19 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 53 maps to socket 0 core 19 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 14 maps to socket 0 core 20 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 54 maps to socket 0 core 20 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 15 maps to socket 0 core 24 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 55 maps to socket 0 core 24 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 16 maps to socket 0 core 25 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 56 maps to socket 0 core 25 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 17 maps to socket 0 core 26 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 57 maps to socket 0 core 26 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 18 maps to socket 0 core 27 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 58 maps to socket 0 core 27 thread 1 
+OMP: Info #172: KMP_AFFINITY: OS proc 19 maps to socket 0 core 28 thread 0 
+OMP: Info #172: KMP_AFFINITY: OS proc 59 maps to socket 0 core 28 thread 1 
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945882 thread 0 bound to OS proc set 0
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945884 thread 1 bound to OS proc set 1
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945885 thread 2 bound to OS proc set 2
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945886 thread 3 bound to OS proc set 3
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945887 thread 4 bound to OS proc set 4
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945888 thread 5 bound to OS proc set 5
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945890 thread 7 bound to OS proc set 7
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2945889 thread 6 bound to OS proc set 6
+/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site-packages/torch_geometric-2.0.4-py3.9.egg/torch_geometric/nn/spmm_kernel.py:11: UserWarning: __floordiv__ is deprecated, and its behavior will change in a future version of pytorch. It currently rounds toward 0 (like the 'trunc' function NOT 'floor'). This results in incorrect rounding for negative values. To keep the current behavior, use torch.div(a, b, rounding_mode='trunc'), or for actual floor division, use torch.div(a, b, rounding_mode='floor').
+  target_flops_on_rows = total_flops_on_rows // num_threads_on_row
+OMP: Info #254: KMP_AFFINITY: pid 2945882 tid 2946491 thread 8 bound to OS proc set 8
+graph_name = products, model_name = sage, is_async = False, is_fp16 = False
+num_epochs = 5, in_channels = 100, hidden_channels = 256, out_channels = 47
+input_dir = ../dataset/ogbn_products_new/ogbn_products_1_part
+Rank = 0, Number of threads = 8
+int64
+nodes_id_range: 0 - 2449028
+nodes_feat_list.shape:
+(2449029, 100)
+float32
+int64
+[[    384    2412    7554 ... 1787657 1864057 2430488]
+ [      0       0       0 ... 2449028 2449028 2449028]]
+local remote_nodes_num_from_each_subgraph:
+tensor([0])
+int64
+elapsed time of loading dataset mask(ms) = 10.435744072310627
+elapsed time of obtaining number of remote nodes(ms) = 13.366446946747601
+elapsed time of obtaining list of remote nodes(ms) = 0.13137503992766142
+convs.0.bias torch.Size([256])
+convs.0.lin.weight torch.Size([256, 100])
+convs.1.bias torch.Size([256])
+convs.1.lin.weight torch.Size([256, 256])
+convs.2.bias torch.Size([47])
+convs.2.lin.weight torch.Size([47, 256])
+tensor([      0,   89993,  180332,  468349,  865403, 1260645, 1657767, 2052356,
+        2449029], dtype=torch.int32)
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.05110690835863352
+Time of comm_forward(ms): 0.016218051314353943
+Time of allocate out(ms): 79.63160402141511
+Time of local aggregate(ms): 13443.7699560076
+Time of async wait(ms): 0.0015159603208303452
+Time of remote aggregate(ms): 0.009060953743755817
+Time of sum up message(ms): 0.0002580927684903145
+Time of 1 dist conv forward(inner)(ms): 13523.479719995521
+#########
+Time of propagate(inner)(ms) = 13523.582759080455
+**************
+Time of linear(ms): 169.27098704036325
+Time of propagate(ms): 13523.59796105884
+Time of add_bias(ms): 189.4561779918149
+Time of 1 dist conv forward(ms): 14239.51670608949
+**************
+----------------------------------------
+Time of conv(ms): 14244.5267
+Time of relu(ms): 110.2061
+Time of dropout(ms): 439.1252
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.025135930627584457
+Time of comm_forward(ms): 0.015016063116490841
+Time of allocate out(ms): 80.4649539059028
+Time of local aggregate(ms): 2477.9140410246328
+Time of async wait(ms): 0.0015280675143003464
+Time of remote aggregate(ms): 0.009520910680294037
+Time of sum up message(ms): 0.00025599729269742966
+Time of 1 dist conv forward(inner)(ms): 2558.430451899767
+#########
+Time of propagate(inner)(ms) = 2558.510172064416
+**************
+Time of linear(ms): 328.9868050487712
+Time of propagate(ms): 2558.523086947389
+Time of add_bias(ms): 189.75655501708388
+Time of 1 dist conv forward(ms): 3411.1536820419133
+**************
+----------------------------------------
+Time of conv(ms): 3416.2102
+Time of relu(ms): 110.5856
+Time of dropout(ms): 446.3603
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.023357104510068893
+Time of comm_forward(ms): 0.013791956007480621
+Time of allocate out(ms): 14.96471103746444
+Time of local aggregate(ms): 557.4973348993808
+Time of async wait(ms): 0.0013260869309306145
+Time of remote aggregate(ms): 0.007604947313666344
+Time of sum up message(ms): 0.00017101410776376724
+Time of 1 dist conv forward(inner)(ms): 572.5082970457152
+#########
+Time of propagate(inner)(ms) = 572.5834059994668
+**************
+Time of linear(ms): 72.22400000318885
+Time of propagate(ms): 572.596843005158
+Time of add_bias(ms): 37.60569589212537
+Time of 1 dist conv forward(ms): 1017.0116999652237
+**************
+tensor([      0,   89993,  180332,  468349,  865403, 1260645, 1657767, 2052356,
+        2449029], dtype=torch.int32)
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008328002877533436
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.009665964171290398
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008280039764940739
+#########
+rank: 0, epoch: 0, loss: 3.824002742767334
+Epoch: 0 time: 54.62 sec
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.02516095992177725
+Time of comm_forward(ms): 0.015371013432741165
+Time of allocate out(ms): 79.70136008225381
+Time of local aggregate(ms): 2480.9704630170017
+Time of async wait(ms): 0.001519918441772461
+Time of remote aggregate(ms): 0.008199014700949192
+Time of sum up message(ms): 0.00028102658689022064
+Time of 1 dist conv forward(inner)(ms): 2560.7223550323397
+#########
+Time of propagate(inner)(ms) = 2560.8108430169523
+**************
+Time of linear(ms): 173.51205297745764
+Time of propagate(ms): 2560.8237789710984
+Time of add_bias(ms): 189.1899590846151
+Time of 1 dist conv forward(ms): 2923.5266520408913
+**************
+----------------------------------------
+Time of conv(ms): 2928.5924
+Time of relu(ms): 109.8037
+Time of dropout(ms): 446.2459
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.024058041162788868
+Time of comm_forward(ms): 0.01391698606312275
+Time of allocate out(ms): 80.54446498863399
+Time of local aggregate(ms): 2481.767086079344
+Time of async wait(ms): 0.0020619481801986694
+Time of remote aggregate(ms): 0.008924049325287342
+Time of sum up message(ms): 0.00015599653124809265
+Time of 1 dist conv forward(inner)(ms): 2562.360668089241
+#########
+Time of propagate(inner)(ms) = 2562.434794032015
+**************
+Time of linear(ms): 327.03319599386305
+Time of propagate(ms): 2562.448109034449
+Time of add_bias(ms): 189.89052902907133
+Time of 1 dist conv forward(ms): 3079.3728730641305
+**************
+----------------------------------------
+Time of conv(ms): 3084.4168
+Time of relu(ms): 110.2631
+Time of dropout(ms): 444.7082
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.024173990823328495
+Time of comm_forward(ms): 0.013835960999131203
+Time of allocate out(ms): 14.90008702967316
+Time of local aggregate(ms): 558.7317630415782
+Time of async wait(ms): 0.0016529811546206474
+Time of remote aggregate(ms): 0.0070909736678004265
+Time of sum up message(ms): 0.00016705598682165146
+Time of 1 dist conv forward(inner)(ms): 573.6787710338831
+#########
+Time of propagate(inner)(ms) = 573.7446650164202
+**************
+Time of linear(ms): 76.61752903368324
+Time of propagate(ms): 573.7564399605617
+Time of add_bias(ms): 38.255381048657
+Time of 1 dist conv forward(ms): 688.6301890481263
+**************
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.007858965545892715
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.009099021553993225
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008991104550659657
+#########
+rank: 0, epoch: 1, loss: 2.658545970916748
+Epoch: 1 time: 16.09 sec
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.022946042008697987
+Time of comm_forward(ms): 0.014798948541283607
+Time of allocate out(ms): 79.52022703830153
+Time of local aggregate(ms): 2482.7199400169775
+Time of async wait(ms): 0.0013120006769895554
+Time of remote aggregate(ms): 0.00839203130453825
+Time of sum up message(ms): 0.00015494879335165024
+Time of 1 dist conv forward(inner)(ms): 2562.287771026604
+#########
+Time of propagate(inner)(ms) = 2562.3540569795296
+**************
+Time of linear(ms): 175.90454092714936
+Time of propagate(ms): 2562.3811800032854
+Time of add_bias(ms): 189.88403503317386
+Time of 1 dist conv forward(ms): 2928.1703860033303
+**************
+----------------------------------------
+Time of conv(ms): 2933.2527
+Time of relu(ms): 110.0247
+Time of dropout(ms): 445.5281
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.026344903744757175
+Time of comm_forward(ms): 0.015042023733258247
+Time of allocate out(ms): 78.54344497900456
+Time of local aggregate(ms): 2477.97300608363
+Time of async wait(ms): 0.001683947630226612
+Time of remote aggregate(ms): 0.007519964128732681
+Time of sum up message(ms): 0.00014505349099636078
+Time of 1 dist conv forward(inner)(ms): 2556.5671869553626
+#########
+Time of propagate(inner)(ms) = 2556.6769579891115
+**************
+Time of linear(ms): 348.4098259359598
+Time of propagate(ms): 2556.68936308939
+Time of add_bias(ms): 189.79141698218882
+Time of 1 dist conv forward(ms): 3094.8913079919294
+**************
+----------------------------------------
+Time of conv(ms): 3099.9237
+Time of relu(ms): 108.9151
+Time of dropout(ms): 444.7004
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.024421955458819866
+Time of comm_forward(ms): 0.014533987268805504
+Time of allocate out(ms): 14.859054004773498
+Time of local aggregate(ms): 558.3738930290565
+Time of async wait(ms): 0.001293024979531765
+Time of remote aggregate(ms): 0.007302965968847275
+Time of sum up message(ms): 0.00017601996660232544
+Time of 1 dist conv forward(inner)(ms): 573.2806749874726
+#########
+Time of propagate(inner)(ms) = 573.3497609617189
+**************
+Time of linear(ms): 75.64859802369028
+Time of propagate(ms): 573.3620210085064
+Time of add_bias(ms): 37.82077901996672
+Time of 1 dist conv forward(ms): 686.8321090005338
+**************
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.007848022505640984
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008590985089540482
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008978997357189655
+#########
+rank: 0, epoch: 2, loss: 2.0616796016693115
+Epoch: 2 time: 16.13 sec
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.023366999812424183
+Time of comm_forward(ms): 0.01397507730871439
+Time of allocate out(ms): 79.72169492859393
+Time of local aggregate(ms): 2482.716922997497
+Time of async wait(ms): 0.0015760306268930435
+Time of remote aggregate(ms): 0.008195987902581692
+Time of sum up message(ms): 0.0002550659701228142
+Time of 1 dist conv forward(inner)(ms): 2562.4859870877117
+#########
+Time of propagate(inner)(ms) = 2562.558204983361
+**************
+Time of linear(ms): 173.205774044618
+Time of propagate(ms): 2562.569986912422
+Time of add_bias(ms): 190.21163100842386
+Time of 1 dist conv forward(ms): 2925.988188944757
+**************
+----------------------------------------
+Time of conv(ms): 2930.9203
+Time of relu(ms): 111.3941
+Time of dropout(ms): 443.1193
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.023908913135528564
+Time of comm_forward(ms): 0.014826073311269283
+Time of allocate out(ms): 80.02728992141783
+Time of local aggregate(ms): 2479.619032004848
+Time of async wait(ms): 0.0013560056686401367
+Time of remote aggregate(ms): 0.00790704507380724
+Time of sum up message(ms): 0.00016600824892520905
+Time of 1 dist conv forward(inner)(ms): 2559.694485971704
+#########
+Time of propagate(inner)(ms) = 2559.7642560023814
+**************
+Time of linear(ms): 333.9415719965473
+Time of propagate(ms): 2559.7803110722452
+Time of add_bias(ms): 190.3094929875806
+Time of 1 dist conv forward(ms): 3084.0321910800412
+**************
+----------------------------------------
+Time of conv(ms): 3089.0824
+Time of relu(ms): 109.5092
+Time of dropout(ms): 444.4768
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.02411496825516224
+Time of comm_forward(ms): 0.015094992704689503
+Time of allocate out(ms): 15.151154017075896
+Time of local aggregate(ms): 556.4139629714191
+Time of async wait(ms): 0.001375097781419754
+Time of remote aggregate(ms): 0.007760943844914436
+Time of sum up message(ms): 0.00016205012798309326
+Time of 1 dist conv forward(inner)(ms): 571.6136250412092
+#########
+Time of propagate(inner)(ms) = 571.6843799455091
+**************
+Time of linear(ms): 73.87043896596879
+Time of propagate(ms): 571.6969440691173
+Time of add_bias(ms): 38.301268010400236
+Time of 1 dist conv forward(ms): 683.8695590849966
+**************
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.0076700234785676
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008959905244410038
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008600996807217598
+#########
+rank: 0, epoch: 3, loss: 1.6921428442001343
+Epoch: 3 time: 16.11 sec
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.02518598921597004
+Time of comm_forward(ms): 0.014309072867035866
+Time of allocate out(ms): 79.76066693663597
+Time of local aggregate(ms): 2479.6107310103253
+Time of async wait(ms): 0.0016570556908845901
+Time of remote aggregate(ms): 0.008754897862672806
+Time of sum up message(ms): 0.00026705674827098846
+Time of 1 dist conv forward(inner)(ms): 2559.421572019346
+#########
+Time of propagate(inner)(ms) = 2559.4905120087788
+**************
+Time of linear(ms): 170.45235401019454
+Time of propagate(ms): 2559.502386022359
+Time of add_bias(ms): 189.87130501773208
+Time of 1 dist conv forward(ms): 2919.826744007878
+**************
+----------------------------------------
+Time of conv(ms): 2924.8455
+Time of relu(ms): 109.7020
+Time of dropout(ms): 443.2121
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.02485397271811962
+Time of comm_forward(ms): 0.01505902037024498
+Time of allocate out(ms): 80.45175101142377
+Time of local aggregate(ms): 2480.035373941064
+Time of async wait(ms): 0.0025350600481033325
+Time of remote aggregate(ms): 0.008244998753070831
+Time of sum up message(ms): 0.00015099067240953445
+Time of 1 dist conv forward(inner)(ms): 2560.5379689950496
+#########
+Time of propagate(inner)(ms) = 2560.610741027631
+**************
+Time of linear(ms): 334.4936469802633
+Time of propagate(ms): 2560.622708988376
+Time of add_bias(ms): 189.36842307448387
+Time of 1 dist conv forward(ms): 3084.4858550699428
+**************
+----------------------------------------
+Time of conv(ms): 3089.4713
+Time of relu(ms): 110.0560
+Time of dropout(ms): 442.5898
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.024548964574933052
+Time of comm_forward(ms): 0.014314078725874424
+Time of allocate out(ms): 15.1494579622522
+Time of local aggregate(ms): 559.2282189754769
+Time of async wait(ms): 0.001391046680510044
+Time of remote aggregate(ms): 0.009162002243101597
+Time of sum up message(ms): 0.00026600901037454605
+Time of 1 dist conv forward(inner)(ms): 574.4273590389639
+#########
+Time of propagate(inner)(ms) = 574.4971259264275
+**************
+Time of linear(ms): 75.23892703466117
+Time of propagate(ms): 574.5087980758399
+Time of add_bias(ms): 37.903663935139775
+Time of 1 dist conv forward(ms): 687.6520779915154
+**************
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.0075589632615447044
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.008409027941524982
+#########
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of scatter gradient to local nodes(ms): 0.01031800638884306
+#########
+rank: 0, epoch: 4, loss: 1.4416780471801758
+Epoch: 4 time: 16.09 sec
+training end.
+forward_time(ms): 51395.2421875
+backward_time(ms): 67626.0625
+share_grad_time(ms): 0.005007954314351082
+update_weight_time(ms): 4.47240686416626
+total_training_time(ms): 119026.1875
+sparse_tensor test!
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.02491101622581482
+Time of comm_forward(ms): 0.015500932931900024
+Time of allocate out(ms): 80.92710899654776
+Time of local aggregate(ms): 2481.5169440116733
+Time of async wait(ms): 0.0016869744285941124
+Time of remote aggregate(ms): 0.008146045729517937
+Time of sum up message(ms): 0.0006790505722165108
+Time of 1 dist conv forward(inner)(ms): 2562.494977028109
+#########
+Time of propagate(inner)(ms) = 2562.568458961323
+**************
+Time of linear(ms): 175.4514171043411
+Time of propagate(ms): 2562.581985956058
+Time of add_bias(ms): 190.62108604703099
+Time of 1 dist conv forward(ms): 2928.655479103327
+**************
+----------------------------------------
+Time of conv(ms): 2933.7910
+Time of relu(ms): 112.1931
+Time of dropout(ms): 0.0341
+----------------------------------------
+tensor([  0, 256], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.024607055820524693
+Time of comm_forward(ms): 0.01573201734572649
+Time of allocate out(ms): 79.86623700708151
+Time of local aggregate(ms): 2482.5042439624667
+Time of async wait(ms): 0.0015159603208303452
+Time of remote aggregate(ms): 0.008483999408781528
+Time of sum up message(ms): 0.00024202745407819748
+Time of 1 dist conv forward(inner)(ms): 2562.421062029898
+#########
+Time of propagate(inner)(ms) = 2562.4916600063443
+**************
+Time of linear(ms): 355.4998009931296
+Time of propagate(ms): 2562.5057589495555
+Time of add_bias(ms): 188.90692305285484
+Time of 1 dist conv forward(ms): 3106.9133050041273
+**************
+----------------------------------------
+Time of conv(ms): 3111.9658
+Time of relu(ms): 109.8310
+Time of dropout(ms): 0.0348
+----------------------------------------
+tensor([ 0, 47], dtype=torch.int32)
+#########
+Time of prepare comm_forward(ms): 0.023904023692011833
+Time of comm_forward(ms): 0.014449935406446457
+Time of allocate out(ms): 15.109641011804342
+Time of local aggregate(ms): 557.4783220654353
+Time of async wait(ms): 0.001778942532837391
+Time of remote aggregate(ms): 0.0077569857239723206
+Time of sum up message(ms): 0.00026402994990348816
+Time of 1 dist conv forward(inner)(ms): 572.6361169945449
+#########
+Time of propagate(inner)(ms) = 572.7055220631883
+**************
+Time of linear(ms): 75.08574705570936
+Time of propagate(ms): 572.7181800175458
+Time of add_bias(ms): 37.79627091716975
+Time of 1 dist conv forward(ms): 685.6008599279448
+**************
+local num_correct_data = 144671, local num_entire_dataset = 196615
+local num_correct_data = 28835, local num_entire_dataset = 39323
+local num_correct_data = 1272888, local num_entire_dataset = 2213091
+size of correct training sample = 144671, size of correct valid sample = 28835, size of correct test sample = 1272888
+size of all training sample = 196615, size of all valid sample = 39323, size of all test sample = 2213091
+Train: 0.7358, Val: 0.7333, Test: 0.5752

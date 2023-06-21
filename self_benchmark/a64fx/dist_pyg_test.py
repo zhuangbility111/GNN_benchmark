@@ -485,6 +485,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
            torch.from_numpy(local_edges_list), torch.from_numpy(remote_edges_list)
 
 def init_dist_group():
+    '''
     if dist.is_mpi_available():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
@@ -503,6 +504,9 @@ def init_dist_group():
     world_size = dist.get_world_size() 
     # mpi rank in this MPI group
     rank = dist.get_rank()
+    '''
+    world_size = 1
+    rank = 0
     return (rank, world_size)
 
 def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -511,7 +515,8 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     obtain_number_remote_nodes_start = time.perf_counter()
     send_num_nodes = [torch.tensor([remote_nodes_num_from_each_subgraph[i]], dtype=torch.int64) for i in range(world_size)]
     recv_num_nodes = [torch.zeros(1, dtype=torch.int64) for i in range(world_size)]
-    dist.all_to_all(recv_num_nodes, send_num_nodes)
+    if world_size != 1:
+        dist.all_to_all(recv_num_nodes, send_num_nodes)
     num_local_nodes_required_by_other = recv_num_nodes
     num_local_nodes_required_by_other = torch.cat(num_local_nodes_required_by_other, dim=0)
     obtain_number_remote_nodes_end = time.perf_counter()
@@ -524,7 +529,8 @@ def obtain_local_nodes_required_by_other(remote_nodes_list, range_of_remote_node
     send_nodes_list = [remote_nodes_list[range_of_remote_nodes_on_local_graph[i]: \
                        range_of_remote_nodes_on_local_graph[i+1]] for i in range(world_size)]
     recv_nodes_list = [torch.zeros(num_local_nodes_required_by_other[i], dtype=torch.int64) for i in range(world_size)]
-    dist.all_to_all(recv_nodes_list, send_nodes_list)
+    if world_size != 1:
+        dist.all_to_all(recv_nodes_list, send_nodes_list)
     local_node_idx_begin = local_nodes_list[0][0]
     local_nodes_required_by_other = [i - local_node_idx_begin for i in recv_nodes_list]
     local_nodes_required_by_other = torch.cat(local_nodes_required_by_other, dim=0)
@@ -583,6 +589,8 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
         total_backward_dur += share_grad_start - backward_start
         total_share_grad_dur += update_weight_start - share_grad_start
         total_update_weight_dur += update_weight_end - update_weight_start
+        if rank == 0:
+            print("Epoch: {} time: {:0.4} sec".format(epoch, (update_weight_end - forward_start)))
     end = time.perf_counter()
     total_training_dur = (end - start)
     
@@ -592,11 +600,12 @@ def train(model, optimizer, nodes_feat_list, nodes_label_list,
     total_update_weight_dur = torch.tensor([total_update_weight_dur])
     total_training_dur = torch.tensor([total_training_dur])
 
-    dist.reduce(total_forward_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_backward_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_share_grad_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_update_weight_dur, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_training_dur, 0, op=dist.ReduceOp.SUM)
+    if world_size != 1:
+        dist.reduce(total_forward_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_backward_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_share_grad_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_update_weight_dur, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_training_dur, 0, op=dist.ReduceOp.SUM)
 
     print("training end.")
     if rank == 0:
@@ -627,7 +636,8 @@ def test(model, nodes_feat_list, nodes_label_list, \
         predict_result.append(num_correct_data) 
         predict_result.append(num_data)
     predict_result = torch.tensor(predict_result)
-    dist.reduce(predict_result, 0, op=dist.ReduceOp.SUM)
+    if world_size != 1:
+        dist.reduce(predict_result, 0, op=dist.ReduceOp.SUM)
 
     if rank == 0:
         train_acc = float(predict_result[0] / predict_result[1])
@@ -749,7 +759,11 @@ if __name__ == "__main__":
     # DDP should synchronize between GPUs when doing batchnorm
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    para_model = torch.nn.parallel.DistributedDataParallel(model)
+    if world_size != 1:
+        para_model = torch.nn.parallel.DistributedDataParallel(model)
+    else:
+        para_model = model
+
     optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
 
     train(para_model, optimizer, nodes_feat_list, nodes_label_list, \
