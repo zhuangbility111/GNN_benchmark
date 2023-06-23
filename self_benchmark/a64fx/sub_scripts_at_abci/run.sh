@@ -1,8 +1,8 @@
 #!/bin/sh
 
-#$-l rt_F=1
+#$-l rt_F=4
 #$-cwd
-#$-l h_rt=00:10:00
+#$-l h_rt=00:15:00
 
 # rt_f is the maximum number of nodes, that want to use
 # h_rt is the maximum time, that our module will run at 
@@ -18,24 +18,20 @@ module load intel-mpi/2021.8
 # module load intel-mkl/2023.0.0
 export FI_PROVIDER=tcp
 random_seed=0
-is_fp16=false
-is_async=false
-num_nodes=1
+is_fp16=true
+is_async=true
 graph_name="products"
+num_epochs=8
 
 # mpi run
 # MPIRUN=mpiexec
 
 # number of total processes 
-# NP=16
+NP=4
 
 # number of processes per node
-# NPP=1
+NPP=1
 
-# HOME_DIR=$(echo ~)
-# ImgJ_path=$HOME_DIR/run_ThunderSTORM.sh
-
-# cmd="$MPIRUN -np $NP -ppn $NPP ./bin/bioMpi $ImgJ_path"
-# echo run_mu_command: $cmd
-# eval $cmd
-sh run_dist.sh -n ${num_nodes} -ppn 1 python ../dist_pyg_test.py --graph_name=${graph_name} --model=sage --is_async=${is_async} --input_dir=../dataset/ogbn_${graph_name}_new/ogbn_${graph_name}_${num_nodes}_part --random_seed=${random_seed} --is_fp16=${is_fp16} --num_epochs=20
+tcmalloc_path=/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/libtcmalloc.so
+LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../dist_pyg_test.py --graph_name=${graph_name} --model=sage --is_async=${is_async} --input_dir=../dataset/ogbn_${graph_name}_new/ogbn_${graph_name}_${NP}_part --random_seed=${random_seed} --is_fp16=${is_fp16} --num_epochs=${num_epochs}
+LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../dist_pyg_test_pre_post_1_comm.py --graph_name=${graph_name} --model=sage --is_async=${is_async} --input_dir=../dataset/ogbn_${graph_name}_new/ogbn_${graph_name}_${NP}_part --random_seed=${random_seed} --is_fp16=${is_fp16} --num_epochs=${num_epochs}

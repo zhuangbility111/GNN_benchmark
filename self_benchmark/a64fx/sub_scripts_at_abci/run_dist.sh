@@ -136,7 +136,7 @@ eval set -- "${MPIEXE_ARGS} $CMD $ARGS"
 echo "Running mpiexec.hydra $@"
 echo "Start Time:  `date`"
 #mpiexec.hydra ${MPIEXE_ARGS} ${CMD} $@
-mpiexec.hydra $@
+mpiexec.hydra --bind-to socket $@
 # LD_PRELOAD=~/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/libtcmalloc.so:$LD_PRELOAD mpiexec.hydra $@
 echo "End Time:    `date`"
 
