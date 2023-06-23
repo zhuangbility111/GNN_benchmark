@@ -1,0 +1,16 @@
+Fatal Python error: init_import_site: Failed to import the site module
+Python runtime state: initialized
+Traceback (most recent call last):
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site.py", line 589, in <module>
+    main()
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site.py", line 576, in main
+    known_paths = addsitepackages(known_paths)
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site.py", line 359, in addsitepackages
+    addsitedir(sitedir, known_paths)
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site.py", line 208, in addsitedir
+    addpackage(sitedir, name, known_paths)
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/site.py", line 164, in addpackage
+    for n, line in enumerate(f):
+  File "/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/python3.9/codecs.py", line 319, in decode
+    def decode(self, input, final=False):
+KeyboardInterrupt
