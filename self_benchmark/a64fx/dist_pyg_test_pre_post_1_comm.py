@@ -19,6 +19,28 @@ import random
 import gc
 import sys
 
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    # torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    # torch.backends.cudnn.deterministic = True
+
+def create_comm_buffer(in_channels, hidden_channels, out_channels, num_send_nodes, num_recv_nodes, is_fp16=False):
+    max_feat_len = max(in_channels, hidden_channels, out_channels)
+
+    send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
+    send_nodes_feat_buf_fp16 = None
+    if is_fp16:
+        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float16)
+
+    recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
+    recv_nodes_feat_buf_fp16 = None
+    if is_fp16:
+        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float16)
+
+    return send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16
+
 class DistSAGEGradWithPre(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
         super().__init__()
@@ -189,6 +211,19 @@ def init_dist_group():
     if dist.is_mpi_available():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
+    else:
+        try:
+            import torch_ccl
+        except ImportError as e:
+            print(e)
+        world_size = int(os.environ.get("PMI_SIZE", -1))
+        rank = int(os.environ.get("PMI_RANK", -1))
+        print("PMI_SIZE = {}".format(world_size))
+        print("PMI_RANK = {}".format(rank))
+        print("use ccl backend for torch.distributed package on x86 cpu.")
+        dist_url = "env://"
+        dist.init_process_group(backend="ccl", init_method="env://", 
+                                world_size=world_size, rank=rank)
     assert torch.distributed.is_initialized()
     print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
     # number of process in this MPI group
@@ -198,7 +233,7 @@ def init_dist_group():
     return (rank, world_size)
 
 def train(model, optimizer, graph, nodes_feat_list, nodes_label_list, 
-          local_train_mask, rank, world_size):
+          local_train_mask, num_epochs, rank, world_size):
     # start training
     start = time.perf_counter()
     total_forward_dur = 0
@@ -207,7 +242,7 @@ def train(model, optimizer, graph, nodes_feat_list, nodes_label_list,
     total_update_weight_dur = 0
 
     model.train()
-    for epoch in range(200):
+    for epoch in range(num_epochs):
         optimizer.zero_grad()
         forward_start = time.perf_counter()
         out = model(graph, nodes_feat_list)
@@ -224,6 +259,8 @@ def train(model, optimizer, graph, nodes_feat_list, nodes_label_list,
         total_backward_dur += share_grad_start - backward_start
         total_share_grad_dur += update_weight_start - share_grad_start
         total_update_weight_dur += update_weight_end - update_weight_start
+        if rank == 0:
+            print("Epoch: {} time: {:0.4} sec".format(epoch, (update_weight_end - forward_start)))
     end = time.perf_counter()
     total_training_dur = (end - start)
     
@@ -242,12 +279,13 @@ def train(model, optimizer, graph, nodes_feat_list, nodes_label_list,
     dist.reduce(max_total_training_dur, 0, op=dist.ReduceOp.MAX)
 
     print("training end.")
-    print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
-    print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
-    print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
-    print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
-    print("total_training_time(average)(ms): {}".format(ave_total_training_dur[0] / float(world_size) * 1000))
-    print("total_training_time(max)(ms): {}".format(max_total_training_dur[0] * 1000.0))
+    if rank == 0:
+        print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
+        print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
+        print("share_grad_time(ms): {}".format(total_share_grad_dur[0] / float(world_size) * 1000))
+        print("update_weight_time(ms): {}".format(total_update_weight_dur[0] / float(world_size) * 1000))
+        print("total_training_time(average)(ms): {}".format(ave_total_training_dur[0] / float(world_size) * 1000))
+        print("total_training_time(max)(ms): {}".format(max_total_training_dur[0] * 1000.0))
 
 def test(model, graph, nodes_feat_list, nodes_label_list, \
          local_train_mask, local_valid_mask, local_test_mask, rank, world_size):
@@ -258,7 +296,12 @@ def test(model, graph, nodes_feat_list, nodes_label_list, \
     out, accs = model(graph, nodes_feat_list), []
     # out, accs = model(nodes_feat_list, local_edges_list), []
     for mask in (local_train_mask, local_valid_mask, local_test_mask):
-        num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        # num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        if mask.size(0) != 0:
+            num_correct_data = (out[mask].argmax(-1) == nodes_label_list[mask]).sum()
+        else:
+            num_correct_data = 0
+
         num_data = mask.size(0)
         print("local num_correct_data = {}, local num_entire_dataset = {}".format(num_correct_data, num_data))
         predict_result.append(num_correct_data) 
@@ -573,17 +616,25 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default='sage')
     parser.add_argument('--is_async', type=str, default='false')
     parser.add_argument('--input_dir', type=str)
+    parser.add_argument('--random_seed', type=int, default=-1)
+    parser.add_argument('--num_epochs', type=int, default=200)
+    parser.add_argument('--is_fp16', type=str, default='false')
 
     args = parser.parse_args()
     cached = False if args.cached == 'false' else True
     is_async = True if args.is_async == 'true' else False
-    if is_async == True:
-        torch.set_num_threads(11)
-    else:
-        torch.set_num_threads(12)
+    input_dir = args.input_dir
+
+    random_seed = args.random_seed
+    num_epochs = args.num_epochs
+    is_fp16 = True if args.is_fp16 == 'true' else False
+
+    # if is_async == True:
+    #     torch.set_num_threads(11)
+    # else:
+    #     torch.set_num_threads(12)
         
     graph_name = args.graph_name
-    input_dir = args.input_dir
     if graph_name == 'products':
         in_channels = 100
         hidden_channels = 256
@@ -604,8 +655,12 @@ if __name__ == "__main__":
     model_name = args.model
     tensor_type = 'sparse_tensor'
 
-    print("graph_name = {}, model_name = {}, is_async = {}".format(graph_name, model_name, is_async))
-    print("in_channels = {}, hidden_channels = {}, out_channels = {}".format(in_channels, hidden_channels, out_channels))
+    # set random seed
+    if random_seed != -1:
+        setup_seed(random_seed)
+
+    print("graph_name = {}, model_name = {}, is_async = {}, is_fp16 = {}".format(graph_name, model_name, is_async, is_fp16))
+    print("num_epochs = {}, in_channels = {}, hidden_channels = {}, out_channels = {}".format(num_epochs, in_channels, hidden_channels, out_channels))
     print("input_dir = {}".format(input_dir))
         
     rank, world_size = init_dist_group()
@@ -666,20 +721,25 @@ if __name__ == "__main__":
     # load features
     nodes_feat_list = np.load(os.path.join(input_dir, "p{:0>3d}-{}_nodes_feat.npy".format(rank, graph_name)))
     nodes_feat_list = torch.from_numpy(nodes_feat_list)
-    print("nodes_feat_list.shape:")
-    print(nodes_feat_list.shape)
-    print(nodes_feat_list.dtype)
+    # print("nodes_feat_list.shape:")
+    # print(nodes_feat_list.shape)
+    # print(nodes_feat_list.dtype)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    max_size = max(in_channels, hidden_channels, out_channels)
-    buf_pre_post_aggr_from = torch.zeros((sum(pre_post_aggr_from_splits), max_size), dtype=torch.float32)
-    buf_pre_post_aggr_to = torch.zeros((sum(pre_post_aggr_to_splits), max_size), dtype=torch.float32)
+    buf_pre_post_aggr_to, buf_pre_post_aggr_to_fp16, \
+    buf_pre_post_aggr_from, buf_pre_post_aggr_from_fp16 = \
+        create_comm_buffer(in_channels, hidden_channels, out_channels, \
+                           sum(pre_post_aggr_to_splits), sum(pre_post_aggr_from_splits), \
+                           is_fp16)
+
     g = DistributedGraphPre(local_adj_t, \
                             adj_t_pre_post_aggr_from, \
                             adj_t_pre_post_aggr_to, \
                             buf_pre_post_aggr_from, \
                             buf_pre_post_aggr_to, \
+                            buf_pre_post_aggr_from_fp16, \
+                            buf_pre_post_aggr_to_fp16, \
                             pre_post_aggr_from_splits, \
                             pre_post_aggr_to_splits, \
                             local_in_degrees)
@@ -693,7 +753,7 @@ if __name__ == "__main__":
     local_train_mask, local_valid_mask, local_test_mask = load_dataset_mask(input_dir, graph_name, rank, world_size)
 
     optimizer = torch.optim.Adam(para_model.parameters(), lr=0.01)
-    train(para_model, optimizer, g, nodes_feat_list, nodes_label_list, local_train_mask, rank, world_size)
+    train(para_model, optimizer, g, nodes_feat_list, nodes_label_list, local_train_mask, num_epochs, rank, world_size)
     test(para_model, g, nodes_feat_list, nodes_label_list, \
          local_train_mask, local_valid_mask, local_test_mask, rank, world_size)
         
