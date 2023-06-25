@@ -126,7 +126,7 @@ def load_graph_data(dir_path, graph_name, rank, world_size):
     local_nodes_list = np.load(os.path.join(dir_path, "p{:0>3d}-{}_nodes.npy".format(rank, graph_name)))
     node_idx_begin = local_nodes_list[0][0]
     node_idx_end = local_nodes_list[local_nodes_list.shape[0]-1][0]
-    print("nodes_id_range: {} - {}".format(node_idx_begin, node_idx_end))
+    # print("nodes_id_range: {} - {}".format(node_idx_begin, node_idx_end))
     num_local_nodes = node_idx_end - node_idx_begin + 1
     load_nodes_end = time.perf_counter()
     time_load_nodes = load_nodes_end - load_nodes_start
@@ -220,14 +220,16 @@ def init_dist_group():
             print(e)
         world_size = int(os.environ.get("PMI_SIZE", -1))
         rank = int(os.environ.get("PMI_RANK", -1))
-        print("PMI_SIZE = {}".format(world_size))
-        print("PMI_RANK = {}".format(rank))
-        print("use ccl backend for torch.distributed package on x86 cpu.")
+        # print("PMI_SIZE = {}".format(world_size))
+        # print("PMI_RANK = {}".format(rank))
+        if rank == 0:
+            print("use ccl backend for torch.distributed package on x86 cpu.")
         dist_url = "env://"
         dist.init_process_group(backend="ccl", init_method="env://", 
                                 world_size=world_size, rank=rank)
     assert torch.distributed.is_initialized()
-    print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
+    if rank == 0:
+        print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
     # number of process in this MPI group
     world_size = dist.get_world_size() 
     # mpi rank in this MPI group

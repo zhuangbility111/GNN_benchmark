@@ -760,8 +760,8 @@ if __name__ == "__main__":
                              world_size,
                              is_fp16).to(device)
 
-    for name, parameters in model.named_parameters():
-        print(name, parameters.size())
+    # for name, parameters in model.named_parameters():
+    #     print(name, parameters.size())
 
     # DDP should synchronize between GPUs when doing batchnorm
     # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
