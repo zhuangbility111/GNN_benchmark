@@ -16,11 +16,6 @@ import random
 
 import psutil
 
-try:
-    import torch_ccl
-except ImportError as e:
-    print(e)
-
 def setup_seed(seed):
     torch.manual_seed(seed)
     # torch.cuda.manual_seed_all(seed)
@@ -490,6 +485,10 @@ def init_dist_group():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
     else:
+        try:
+            import torch_ccl
+        except ImportError as e:
+            print(e)
         world_size = int(os.environ.get("PMI_SIZE", -1))
         rank = int(os.environ.get("PMI_RANK", -1))
         print("PMI_SIZE = {}".format(world_size))
