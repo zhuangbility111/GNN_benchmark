@@ -83,7 +83,7 @@ print("elapsed time of removing duplicated edges = {}ms".format((end_time - star
 src_id = torch.from_numpy(src_id)
 dst_id = torch.from_numpy(dst_id)
 original_edge_id = torch.from_numpy(original_edge_id)
-edge_type = torch.zeros(len(src_id), dtype=np.int64)
+edge_type = torch.zeros(len(src_id), dtype=torch.int64)
 edge_data = torch.stack([src_id, dst_id, original_edge_id, edge_type], 1)
 print(edge_data)
 print(edge_data.shape)
@@ -99,7 +99,7 @@ duplicate_original_edge_id = torch.from_numpy(duplicate_original_edge_id)
 removed_edge_data = torch.stack([torch.cat([self_loop_src_id, duplicate_src_id]),
 				 torch.cat([self_loop_dst_id, duplicate_dst_id]),
 				 torch.cat([self_loop_original_edge_id, duplicate_original_edge_id]),
-				 torch.cat([torch.zeros(len(self_loop_src_id), dtype=np.int64), torch.zeros(len(duplicate_src_id), dtype=np.int64)])],
+				 torch.cat([torch.zeros(len(self_loop_src_id), dtype=torch.int64), torch.zeros(len(duplicate_src_id), dtype=torch.int64)])],
 				1)
 
 print(removed_edge_data)
@@ -107,9 +107,9 @@ print(removed_edge_data.shape)
 np.savetxt(os.path.join(dir_path, "{}_removed_edges.txt".format(graph_name)), removed_edge_data.numpy(), fmt='%d', delimiter=' ')
 
 ###### process node ######
-node_type = torch.zeros(num_nodes, dtype=np.int64)
-node_weight = torch.ones(num_nodes, dtype=np.int64)
-node_id = torch.arange(num_nodes, dtype=np.int64)
+node_type = torch.zeros(num_nodes, dtype=torch.int64)
+node_weight = torch.ones(num_nodes, dtype=torch.int64)
+node_id = torch.arange(num_nodes, dtype=torch.int64)
 node_data = torch.stack([node_type, node_weight, node_id], 1)
 print(node_data)
 print(node_data.shape)
