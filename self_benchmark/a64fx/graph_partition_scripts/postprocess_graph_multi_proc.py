@@ -45,7 +45,7 @@ def split_nodes_feats(dir_path, graph_name, begin_part, end_part):
         print(local_node_feat_list.shape)
 
         node_label_list = np.load(os.path.join("./", "{}_nodes_label.npy".format(graph_name)), mmap_mode='r')
-        local_node_label_list = node_label_list[node_id_list[:, 1]].reshape(-1)
+        local_node_label_list = node_label_list[node_id_list[:, 1]].reshape(-1).astype(np.int64)
         np.save(os.path.join(dir_path, "p{:0>3d}-{}_nodes_label.npy".format(i, graph_name)), local_node_label_list)
         print(local_node_label_list.shape)
 
