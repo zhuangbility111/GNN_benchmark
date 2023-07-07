@@ -14,12 +14,6 @@ import argparse
 import os
 import random
 
-import psutil
-
-try:
-    import torch_ccl
-except ImportError as e:
-    print(e)
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -35,13 +29,13 @@ def create_comm_buffer(in_channels, hidden_channels, out_channels, local_nodes_r
     send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
     send_nodes_feat_buf_fp16 = None
     if is_fp16:
-        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float16)
+        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.bfloat16)
 
     num_recv_nodes = remote_nodes_list.size(0)
     recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
     recv_nodes_feat_buf_fp16 = None
     if is_fp16:
-        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float16)
+        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.bfloat16)
 
     return send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16
 
@@ -493,6 +487,7 @@ def init_dist_group():
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
     else:
+        import torch_ccl
         world_size = int(os.environ.get("PMI_SIZE", -1))
         rank = int(os.environ.get("PMI_RANK", -1))
         print("PMI_SIZE = {}".format(world_size))
