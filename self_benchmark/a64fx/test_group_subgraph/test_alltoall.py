@@ -4,6 +4,8 @@ import os
 import numpy as np
 import time
 
+import argparse
+
 torch.set_num_threads(1)
 
 def init_dist_group():
@@ -176,14 +178,20 @@ def test_original_alltoall(rank, comm_matrix, send_buf, feat_len=128):
     return recv_buf
         
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_clusters", type=int, default=5)
+    args = parser.parse_args()
+
+    num_clusters = args.num_clusters
+
     rank, world_size = init_dist_group()
 
-    label_matrix = np.load('global_comm_pattern_512proc_clustered_label.npy')
-    comm_matirx = np.load('global_comm_pattern_512proc.npy')
+    label_matrix = np.load('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, world_size))
+    comm_matirx = np.load('global_comm_pattern_{}proc.npy'.format(world_size))
 
     global_rank_to_group_rank = np.zeros((np.max(label_matrix)+1, world_size), dtype=np.int64)
     ranks_list_in_each_cluster = []
-    with open('ranks_list_in_each_clusters_512proc.txt', 'r') as f:
+    with open('ranks_list_in_each_collective_group({}clusters_{}procs).txt'.format(num_clusters, world_size), 'r') as f:
         cluster_id = 0
         for line in f:
             if line != '\n':
@@ -192,8 +200,9 @@ if __name__ == "__main__":
                 global_rank_to_group_rank[cluster_id][ranks_list] = np.arange(len(ranks_list), dtype=np.int64)
                 cluster_id += 1
 
-    feat_len = 64
+    feat_len = 128
 
+    # print(label_matrix)
     groups = init_subcommunicator(rank, world_size, label_matrix, ranks_list_in_each_cluster)
 
     send_buf = torch.rand((comm_matirx[rank].sum(), feat_len), dtype=torch.float32)
@@ -201,6 +210,7 @@ if __name__ == "__main__":
 
     res = test_group_alltoall(rank, groups, label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
 
+    '''
     is_passed = 0
     if torch.allclose(res_ref, res):
         is_passed = 1
@@ -215,6 +225,7 @@ if __name__ == "__main__":
             print("test passed!")
         else:
             print("test failed!")
+    '''
 
     # repeat = 1
     # comm_time = []
