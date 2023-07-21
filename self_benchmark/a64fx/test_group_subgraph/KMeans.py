@@ -7,6 +7,7 @@ from sklearn.metrics import silhouette_score
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 
+import argparse
 
 def get_X(data):
     n = int(data.shape[0])
@@ -64,10 +65,53 @@ def cluster_for_result(X, cluster_num):
     labels = adjust_cluster_order(labels, X)
 
     for i in range(cluster_num):
-        print("cluster {} has {} edges".format(i, np.sum(labels == i)))
-        print("comm data volume range: [{}, {}]".format(np.min(X[labels == i]), np.max(X[labels == i])))
+        if i < cluster_num - 1:
+            labels[labels == i+1] = i
+            print("cluster {} has {} edges".format(i, np.sum(labels == i)))
+            print("comm data volume range: [{}, {}]".format(np.min(X[labels == i]), np.max(X[labels == i])))
     
     return labels
+
+def recover_cluster_result(label_list, data_volume_matrix):
+    n = int(data_volume_matrix.shape[0])
+    k = 0
+    label_matrix = np.zeros_like(data_volume_matrix)
+    # recover the cluster result (the upper triangle of data comm matrix) to original data comm matrix
+    for i in range(n):
+        for j in range(i, n):
+            # the cluster algorithm will group the edges in which data volume is 0 to the cluster 0
+            # so we need to remove these edges from cluster 0 as these edges (volume = 0) don't exist in the original graph
+            # if data[i, j] == 0 and data[j, i] == 0, means that there is no edge between vertex i and vertex j
+            # so i and j are not in the same communicator
+            if data_volume_matrix[i, j] == 0 and data_volume_matrix[j, i] == 0:
+                label_matrix[i, j] = -1
+                label_matrix[j, i] = -1
+            # but if data[i, j] != 0 or data[j, i] != 0, means that i and j need to be the same communicator for communication
+            else:
+                label_matrix[i, j] = label_list[k]
+                label_matrix[j, i] = label_list[k]
+            k += 1
+
+    return label_matrix
+
+def divide_group_into_p2p_and_collective(label_matrix):
+    # divide the graph into p2p group and collective group based on the degree of each vertex
+    p2p_label_matrix = np.copy(label_matrix)
+    num_labels = np.max(label_matrix) + 1
+
+    for i in range(label_matrix.shape[0]):
+        for label in range(num_labels):
+            idx = (label_matrix[i, :] == label)
+            # degree of vertex i in label group = 1, means that vertex i has only one edge in this label group
+            if np.sum(idx) == 1:
+                label_matrix[i, idx] = -1
+                label_matrix[idx, i] = -1
+            # degree of vertex i in label group > 1, means that vertex i has more than one edge in this label group
+            else:
+                p2p_label_matrix[i, idx] = -1
+                p2p_label_matrix[idx, i] = -1
+
+    return p2p_label_matrix, label_matrix
 
 def find_connected_components(label_matrix):
     max_label = np.max(label_matrix)
@@ -112,69 +156,53 @@ def find_connected_components(label_matrix):
     
     return label_matrix, cluster_dict
 
-def save_labels(label_list, data_volume_matrix):
-    n = int(data_volume_matrix.shape[0])
-    k = 0
-    label_matrix = np.zeros_like(data_volume_matrix)
+def save_labels(label_list, data_volume_matrix, num_clusters, num_procs):
     # recover the cluster result (the upper triangle of data comm matrix) to original data comm matrix
-    for i in range(n):
-        for j in range(i, n):
-            # the cluster algorithm will group the edges in which data volume is 0 to the cluster 0
-            # so we need to remove these edges from cluster 0 as these edges (volume = 0) don't exist in the original graph
-            # if data[i, j] == 0 and data[j, i] == 0, means that there is no edge between vertex i and vertex j
-            # so i and j are not in the same communicator
-            if data_volume_matrix[i, j] == 0 and data_volume_matrix[j, i] == 0:
-                label_matrix[i, j] = -1
-                label_matrix[j, i] = -1
-            # but if data[i, j] != 0 or data[j, i] != 0, means that i and j need to be the same communicator for communication
-            else:
-                label_matrix[i, j] = label_list[k]
-                label_matrix[j, i] = label_list[k]
-            k += 1
+    label_matrix = recover_cluster_result(label_list, data_volume_matrix)
 
-    label_matrix, cluster_dict= find_connected_components(label_matrix)
+    # divide the graph into p2p group and collective group based on the degree of each vertex
+    p2p_label_matrix, collective_label_matrix = divide_group_into_p2p_and_collective(label_matrix)
 
-    print("cluster_dict: ", cluster_dict)
-    for key in cluster_dict:
-        print("cluster {} has {} processes".format(key, len(cluster_dict[key])))
+    # label_matrix, cluster_dict = find_connected_components(label_matrix)
+    collective_label_matrix, collective_cluster_dict = find_connected_components(collective_label_matrix)
 
-    np.save('global_comm_pattern_512proc_clustered_label.npy', label_matrix)
+    # print("cluster_dict: ", cluster_dict)
+    for key in collective_cluster_dict:
+        max_degs = -1
+        min_degs = 99999
+        for rank in collective_cluster_dict[key]:
+            # print("rank {} has {} edges(out-degs)".format(rank, np.sum(label_matrix[rank, :] == key)))
+            degs = np.sum(label_matrix[rank, :] == key)
+            min_degs = min(min_degs, degs)
+            max_degs = max(max_degs, degs)
+        print("cluster {} has {} processes, the min-degs and max-degs is {} and {}".format(key, len(collective_cluster_dict[key]), min_degs, max_degs))
 
-    with open('ranks_list_in_each_clusters_512proc.txt', 'w') as f:
-        num_keys = len(cluster_dict.keys())
+    np.save('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), label_matrix)
+    np.save('p2p_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), p2p_label_matrix)
+
+    with open('ranks_list_in_each_collective_group({}clusters_{}procs).txt'.format(num_clusters, num_procs), 'w') as f:
+        num_keys = len(collective_cluster_dict.keys())
         for i in range(num_keys):
-            ranks_list = list(cluster_dict[i])
+            ranks_list = list(collective_cluster_dict[i])
             ranks_list.sort()
-            print(ranks_list)
+            # print(ranks_list)
             delimiter = ','
             f.write(delimiter.join(map(str, ranks_list)))
             if i != num_keys - 1:
                 f.write('\n')
 
-
 if __name__ == "__main__":
-    data = np.load('global_comm_pattern_512proc.npy')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num_clusters', type=int, default=5)
+    parser.add_argument('--num_procs', type=int, default=512)
+    args = parser.parse_args()
+
+    num_clusters = args.num_clusters
+    num_procs = args.num_procs
+
+    data = np.load('global_comm_pattern_{}proc.npy'.format(num_procs))
     X = get_X(data)
 
-    labels = cluster_for_result(X, 5)
+    labels = cluster_for_result(X, num_clusters)
 
-    save_labels(labels, data)
-
-    # sse = []
-    # # silhouette_scores = []
-    # for k in range(2, 20):
-    #     kmeans = KMeans(n_clusters=k, random_state=42)
-    #     kmeans.fit(X)
-    #     sse.append(kmeans.inertia_)
-    #     # silhouette_scores.append(silhouette_score(X, kmeans.labels_))
-    #     print("Kmeans on K = {} finish!".format(k))
-
-    # plt.plot(range(2, 20), sse, 'go-')
-    # plt.xlabel('Number of Clusters (k)')
-    # plt.ylabel('SSE')
-    # plt.savefig('kmeans_elbow_random42.png')
-
-    # plt.plot(range(2, 20), silhouette_scores, 'ro-')
-    # plt.xlabel('Number of Clusters (k)')
-    # plt.ylabel('Silhouette Coefficient')
-    # plt.savefig('kmeans_silhouette.png')
+    save_labels(labels, data, num_clusters, num_procs)
