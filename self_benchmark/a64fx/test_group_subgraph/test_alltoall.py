@@ -33,7 +33,7 @@ def init_dist_group():
     rank = dist.get_rank()
     return (rank, world_size)
 
-def init_subcommunicator(rank, world_size, labels, ranks_list_in_each_cluster):
+def init_subcommunicator(labels, ranks_list_in_each_cluster):
     groups = []
     num_labels = np.max(labels) + 1
     for i in range(num_labels):
@@ -96,6 +96,8 @@ def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_
 
     num_communicators = np.max(recv_labels) + 1
 
+    print("num_communicators = {}".format(num_communicators))
+
     send_bufs_list = construct_send_buf(send_labels, data_send_to_other_rank, send_buf)
 
     for label in range(num_communicators):
@@ -104,7 +106,7 @@ def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_
             recv_data_volume = np.sum(data_recv_from_other_rank[recv_rank])
             recv_bufs_list[label] = torch.zeros((recv_data_volume, feat_len), dtype=torch.float32)
 
-    repeat = 11
+    repeat = 21
     total_comm_time_list = np.zeros(repeat, dtype=np.float32)
 
     for n in range(repeat):
@@ -156,6 +158,128 @@ def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_
 
     return res
 
+def p2p_communicate(rank, p2p_labels_matrix, comm_matirx, \
+                    send_data_range_list, recv_data_range_list, \
+                    send_buf, recv_buf, feat_len=128):
+    p2p_send_to_ranks_list   = (p2p_labels_matrix[rank, :] == 1).nonzero()[0]
+    p2p_recv_from_ranks_list = (p2p_labels_matrix[:, rank] == 1).nonzero()[0]
+
+    send_bufs_list = list()
+    recv_bufs_list = list()
+    for send_to_rank in p2p_send_to_ranks_list:
+        send_bufs_list.append(send_buf[send_data_range_list[send_to_rank]: send_data_range_list[send_to_rank+1]])
+    for recv_from_rank in p2p_recv_from_ranks_list:
+        recv_bufs_list.append(recv_buf[recv_data_range_list[recv_from_rank]: recv_data_range_list[recv_from_rank+1]])
+
+    send_handles = list()
+    recv_handles = list()
+
+    # send data to other ranks
+    for i in range(p2p_send_to_ranks_list.shape[0]):
+        if send_bufs_list[i].shape[0] > 0:
+            send_handles.append(dist.isend(send_bufs_list[i], p2p_send_to_ranks_list[i]))
+    
+    # recv data from other ranks
+    for i in range(p2p_recv_from_ranks_list.shape[0]):
+        if recv_bufs_list[i].shape[0] > 0:
+            recv_handles.append(dist.irecv(recv_bufs_list[i], p2p_recv_from_ranks_list[i]))
+    
+    for handle in recv_handles:
+        handle.wait()
+    
+# def collective_communicate(rank, groups, collective_labels_matrix, \
+#                            comm_matrix, global_rank_to_group_rank, \
+#                            send_data_range_list, recv_data_range_list, \
+#                            send_buf, recv_buf, feat_len=128):
+#     send_labels = collective_labels_matrix[rank]
+#     recv_labels = collective_labels_matrix[:, rank]
+
+#     data_send_to_other_rank = comm_matrix[rank]
+#     data_recv_from_other_rank = comm_matrix[:, rank]
+
+#     unique_send_labels = np.unique(send_labels)
+            
+#     send_bufs_list = list()
+#     recv_bufs_list = list()
+
+#     for label in unique_send_labels:
+#         group_size = dist.get_world_size(group=groups[label])
+#         if group_size != -1 and label >= 0:
+
+#             send_splits = np.zeros(group_size, dtype=np.int64)
+#             recv_splits = np.zeros(group_size, dtype=np.int64)
+
+#             send_rank = (send_labels == label).nonzero()[0]
+#             recv_rank = (recv_labels == label).nonzero()[0]
+
+#             for i in send_rank:
+#                 send_bufs_list.append(send_buf[send_data_range_list[i]: send_data_range_list[i+1]])
+#             send_bufs_list = torch.cat(send_bufs_list, dim=0)
+            
+#             for i in recv_rank:
+#                 recv_bufs_list.append(recv_buf[recv_data_range_list[i]: recv_data_range_list[i+1]])
+#             recv_bufs_list = torch.cat(recv_bufs_list, dim=0)
+
+#             send_splits[global_rank_to_group_rank[label][send_rank]] = data_send_to_other_rank[send_rank]
+#             recv_splits[global_rank_to_group_rank[label][recv_rank]] = data_recv_from_other_rank[recv_rank]
+
+#             assert dist.get_world_size(group=groups[label]) == len(send_splits) and \
+#                     dist.get_world_size(group=groups[label]) == len(recv_splits)
+
+#             # dist.barrier(group=groups[label])
+#             repeat = 21
+#             total_comm_time_list = np.zeros(repeat, dtype=np.float32)
+#             for n in range(repeat):
+#                 dist.barrier(group=groups[label])
+#                 begin = time.perf_counter()
+#                 # handle = dist.all_to_all(send_bufs_list, recv_bufs_list, groups[label], async_op=True)
+#                 handle = dist.all_to_all_single(recv_bufs_list, send_bufs_list, \
+#                                                 recv_splits.tolist(), send_splits.tolist(), \
+#                                                 groups[label], async_op=True)
+#                 handle.wait()
+#                 end = time.perf_counter()
+#                 print("total group_alltoall time = {}ms".format((end - begin) * 1000.0), flush=True)
+#                 total_comm_time_list[n] = (end - begin) * 1000.0
+#             print("average elapsed time of group all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
+
+def collective_communicate(rank, groups, collective_labels_matrix, \
+                           comm_matrix, global_rank_to_group_rank, \
+                           send_buf, recv_buf, feat_len=128):
+    
+    return test_group_alltoall(rank, groups, collective_labels_matrix, comm_matrix, global_rank_to_group_rank, send_buf, feat_len)
+    
+# p2p and collective communication are mixed together
+def test_group_alltoall_v2(rank, groups, collective_labels_matrix, p2p_labels_matrix, comm_matrix, global_rank_to_group_rank, send_buf, feat_len=128):
+    send_data_range_list = np.zeros(comm_matrix.shape[0] + 1, dtype=np.int64)
+    recv_data_range_list = np.zeros(comm_matrix.shape[0] + 1, dtype=np.int64)
+
+    recv_buf = torch.zeros((comm_matrix[:, rank].sum(), feat_len), dtype=torch.float32)
+
+    for i in range(comm_matrix.shape[0]):
+        send_data_range_list[i+1] = send_data_range_list[i] + comm_matrix[rank, i]
+        recv_data_range_list[i+1] = recv_data_range_list[i] + comm_matrix[i, rank]
+    
+    # repeat = 11
+    # total_comm_time_list = np.zeros(repeat, dtype=np.float32)
+    
+    # for n in range(repeat):
+    '''
+    p2p_communicate(rank, p2p_labels_matrix, comm_matrix, \
+                    send_data_range_list, recv_data_range_list, \
+                    send_buf, recv_buf, feat_len)
+    '''
+    
+    
+    collective_communicate(rank, groups, collective_labels_matrix, \
+                            comm_matrix, global_rank_to_group_rank, \
+                            send_buf, recv_buf, feat_len)
+
+        # total_comm_time_list[n] = (end - begin)*1000.0
+    
+    # print("average elapsed time of group all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
+
+    return recv_buf
+
     
 def test_original_alltoall(rank, comm_matrix, send_buf, feat_len=128):
     send_splits = comm_matrix[rank].tolist()
@@ -163,7 +287,7 @@ def test_original_alltoall(rank, comm_matrix, send_buf, feat_len=128):
 
     recv_buf = torch.zeros((sum(recv_splits), feat_len), dtype=torch.float32)
 
-    repeat = 11
+    repeat = 21
     total_comm_time_list = np.zeros(repeat, dtype=np.float32)
     
     for i in range(repeat):
@@ -186,10 +310,15 @@ if __name__ == "__main__":
 
     rank, world_size = init_dist_group()
 
-    label_matrix = np.load('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, world_size))
+    # load the collective communication pattern
+    collective_label_matrix = np.load('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, world_size))
+    # load the p2p communication pattern
+    p2p_label_matrix = np.load('p2p_group_labels({}clusters_{}procs).npy'.format(num_clusters, world_size))
+    # load the global communication volume
     comm_matirx = np.load('global_comm_pattern_{}proc.npy'.format(world_size))
 
-    global_rank_to_group_rank = np.zeros((np.max(label_matrix)+1, world_size), dtype=np.int64)
+    global_rank_to_group_rank = np.zeros((np.max(collective_label_matrix)+1, world_size), dtype=np.int64)
+
     ranks_list_in_each_cluster = []
     with open('ranks_list_in_each_collective_group({}clusters_{}procs).txt'.format(num_clusters, world_size), 'r') as f:
         cluster_id = 0
@@ -203,12 +332,17 @@ if __name__ == "__main__":
     feat_len = 128
 
     # print(label_matrix)
-    groups = init_subcommunicator(rank, world_size, label_matrix, ranks_list_in_each_cluster)
+    # init subcommunicators for collective communication
+    groups = init_subcommunicator(collective_label_matrix, ranks_list_in_each_cluster)
 
+    # prepare the send buffer
     send_buf = torch.rand((comm_matirx[rank].sum(), feat_len), dtype=torch.float32)
+
     res_ref = test_original_alltoall(rank, comm_matirx, send_buf, feat_len)
 
-    res = test_group_alltoall(rank, groups, label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
+    # res = test_group_alltoall(rank, groups, collective_label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
+
+    res = test_group_alltoall_v2(rank, groups, collective_label_matrix, p2p_label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
 
     '''
     is_passed = 0
@@ -226,44 +360,3 @@ if __name__ == "__main__":
         else:
             print("test failed!")
     '''
-
-    # repeat = 1
-    # comm_time = []
-    # barrier_time = []
-
-    # if rank == 0:
-    #     send_buf = torch.zeros((100 + world_size - 1,2), dtype=torch.float16)
-    # else:
-    #     send_buf = torch.zeros((world_size,2), dtype=torch.float16)
-            
-    # for i in range(send_buf.shape[0]):
-    #     send_buf[i][0] = world_size*rank + i
-    #     send_buf[i][1] = world_size*rank + i
-    # print("send_buf = {}".format(send_buf))
-    # recv_buf = torch.zeros((world_size, 2), dtype=torch.float16)
-    # if rank == 3:
-    #     recv_buf = torch.zeros((100 + world_size - 1, 2), dtype=torch.float16)
-    # send_splits = [1 for i in range(world_size)]
-    # recv_splits = [1 for i in range(world_size)]
-
-    # if rank == 0:
-    #     send_splits[3] = 100
-    # elif rank == 3:
-    #     recv_splits[0] = 100
-
-    # for i in range(repeat):
-    #     barrier_begin = time.perf_counter()
-    #     dist.barrier()
-    #     comm_begin = time.perf_counter()
-    #     dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits)
-    #     comm_end = time.perf_counter()
-    #     barrier_time.append((comm_begin - barrier_begin)*1000.0)
-    #     comm_time.append((comm_end - comm_begin)*1000.0)
-    #     print("number of send data = {}".format(sum(send_splits)))
-    #     print("number of recv data = {}".format(sum(recv_splits)))
-    #     print("recv_buf = {}".format(recv_buf))
-
-    # for i in range(repeat):
-    #     print("elapsed time of barrier {} = {}ms".format(i, barrier_time[i]))
-    #     print("elapsed time of communication {} = {}ms".format(i, comm_time[i]))
-

@@ -113,6 +113,45 @@ def divide_group_into_p2p_and_collective(label_matrix):
 
     return p2p_label_matrix, label_matrix
 
+def remove_large_procs_from_small_clusters(collective_label_matrix):
+    num_clusters = np.max(collective_label_matrix) + 1
+    p2p_label_matrix = np.zeros_like(collective_label_matrix)
+    new_collective_label_matrix = np.copy(collective_label_matrix)
+    clusters_dict = dict()
+    # for i in range(num_clusters):
+    #     row_idx, col_idx = np.where(collective_label_matrix == i)
+    #     if clusters_dict.get(i) is None:
+    #         clusters_dict[i] = set()
+    #     clusters_dict[i].update(row_idx)
+    #     clusters_dict[i].update(col_idx)
+
+    num_procs = collective_label_matrix.shape[0]
+    group_idx = np.zeros(num_procs, dtype=np.int32)
+    for cur_proc in range(num_procs):
+        idx = np.max(collective_label_matrix[cur_proc, :])
+        group_idx[cur_proc] = idx
+
+    print("group_idx = {}".format(group_idx))
+    print("collective_label_matrix = {}".format(collective_label_matrix))
+
+    for cur_proc in range(num_procs):
+        idx = ((collective_label_matrix[cur_proc, :] != group_idx[cur_proc]) & \
+                (collective_label_matrix[cur_proc, :] != -1)).nonzero()[0]
+        
+        for target_proc in idx:
+            if group_idx[target_proc] == group_idx[cur_proc]:
+                new_collective_label_matrix[cur_proc, target_proc] = group_idx[cur_proc]
+                new_collective_label_matrix[target_proc, cur_proc] = group_idx[cur_proc]
+            else:
+                new_collective_label_matrix[cur_proc, target_proc] = -1
+                new_collective_label_matrix[target_proc, cur_proc] = -1
+                p2p_label_matrix[cur_proc, target_proc] = 1
+                p2p_label_matrix[target_proc, cur_proc] = 1
+
+    print("new_collective_label_matrix = {}".format(new_collective_label_matrix))
+
+    return new_collective_label_matrix, p2p_label_matrix
+
 def find_connected_components(label_matrix):
     max_label = np.max(label_matrix)
     new_global_rank_to_labels = []
@@ -122,6 +161,9 @@ def find_connected_components(label_matrix):
         # convert the subgraph to a sparse matrix
         row_idx, col_idx = np.where(label_matrix == i)
         global_rank = np.unique(np.concatenate([row_idx, col_idx], axis=0))
+        if global_rank.shape[0] == 0:
+            new_global_rank_to_labels.append(dict())
+            continue
         global_rank_to_local_rank = np.zeros(np.max(global_rank) + 1)
         for k in range(global_rank.shape[0]):
             global_rank_to_local_rank[global_rank[k]] = k
@@ -161,7 +203,9 @@ def save_labels(label_list, data_volume_matrix, num_clusters, num_procs):
     label_matrix = recover_cluster_result(label_list, data_volume_matrix)
 
     # divide the graph into p2p group and collective group based on the degree of each vertex
-    p2p_label_matrix, collective_label_matrix = divide_group_into_p2p_and_collective(label_matrix)
+    # p2p_label_matrix, collective_label_matrix = divide_group_into_p2p_and_collective(label_matrix)
+
+    collective_label_matrix, p2p_label_matrix = remove_large_procs_from_small_clusters(label_matrix)
 
     # label_matrix, cluster_dict = find_connected_components(label_matrix)
     collective_label_matrix, collective_cluster_dict = find_connected_components(collective_label_matrix)
@@ -177,7 +221,7 @@ def save_labels(label_list, data_volume_matrix, num_clusters, num_procs):
             max_degs = max(max_degs, degs)
         print("cluster {} has {} processes, the min-degs and max-degs is {} and {}".format(key, len(collective_cluster_dict[key]), min_degs, max_degs))
 
-    np.save('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), label_matrix)
+    np.save('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), collective_label_matrix)
     np.save('p2p_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), p2p_label_matrix)
 
     with open('ranks_list_in_each_collective_group({}clusters_{}procs).txt'.format(num_clusters, num_procs), 'w') as f:
