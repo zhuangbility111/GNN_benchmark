@@ -6,12 +6,21 @@ import time
 
 import argparse
 
+from mpi4py import MPI
+
 torch.set_num_threads(1)
+mpi4py_available = True
 
 def init_dist_group():
+    comm = None
     if dist.is_mpi_available():
-        print("mpi in torch.distributed is available!")
+        if mpi4py_available:
+            comm = MPI.COMM_WORLD
+            rank = comm.Get_rank()
+            world_size = comm.Get_size()
+        print("mpi in mpi4py is available!")
         dist.init_process_group(backend="mpi")
+        print("mpi in torch.distributed is available!")
     else:
         try:
             import torch_ccl
@@ -25,19 +34,27 @@ def init_dist_group():
         dist_url = "env://"
         dist.init_process_group(backend="ccl", init_method="env://", 
                                 world_size=world_size, rank=rank)
-    assert torch.distributed.is_initialized()
-    print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
+    # assert torch.distributed.is_initialized()
+    # print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
     # number of process in this MPI group
     world_size = dist.get_world_size() 
     # mpi rank in this MPI group
     rank = dist.get_rank()
-    return (rank, world_size)
+    return (comm, rank, world_size)
 
-def init_subcommunicator(labels, ranks_list_in_each_cluster):
+def init_subcommunicator(rank, labels, ranks_list_in_each_cluster):
     groups = []
     num_labels = np.max(labels) + 1
     for i in range(num_labels):
-        groups.append(dist.new_group(ranks_list_in_each_cluster[i], backend="mpi"))
+        if mpi4py_available:
+            key = 0
+            if rank in ranks_list_in_each_cluster[i]:
+                color = i
+            else: 
+                color = MPI.UNDEFINED
+            groups.append(MPI.COMM_WORLD.Split(color, key))
+        else: 
+            groups.append(dist.new_group(ranks_list_in_each_cluster[i], backend="mpi"))
     return groups
 
 def construct_result(recv_labels, data_recv_from_other_rank, recv_bufs_list, num_communicators):
@@ -85,7 +102,7 @@ def construct_send_buf(send_labels, data_send_to_other_rank, send_buf):
     
     return send_bufs_list
     
-def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_rank, send_buf, feat_len=128):
+def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_rank, send_buf, feat_len):
     recv_bufs_list = dict()
 
     data_send_to_other_rank = comm_matrix[rank]
@@ -158,9 +175,9 @@ def test_group_alltoall(rank, groups, labels, comm_matrix, global_rank_to_group_
 
     return res
 
-def p2p_communicate(rank, p2p_labels_matrix, comm_matirx, \
+def p2p_communicate(rank, comm, p2p_labels_matrix, comm_matirx, \
                     send_data_range_list, recv_data_range_list, \
-                    send_buf, recv_buf, feat_len=128):
+                    send_buf, recv_buf, feat_len):
     p2p_send_to_ranks_list   = (p2p_labels_matrix[rank, :] == 1).nonzero()[0]
     p2p_recv_from_ranks_list = (p2p_labels_matrix[:, rank] == 1).nonzero()[0]
 
@@ -168,25 +185,32 @@ def p2p_communicate(rank, p2p_labels_matrix, comm_matirx, \
     recv_bufs_list = list()
     for send_to_rank in p2p_send_to_ranks_list:
         send_bufs_list.append(send_buf[send_data_range_list[send_to_rank]: send_data_range_list[send_to_rank+1]])
+
     for recv_from_rank in p2p_recv_from_ranks_list:
         recv_bufs_list.append(recv_buf[recv_data_range_list[recv_from_rank]: recv_data_range_list[recv_from_rank+1]])
 
     send_handles = list()
     recv_handles = list()
 
+    begin = time.perf_counter()
     # send data to other ranks
     for i in range(p2p_send_to_ranks_list.shape[0]):
         if send_bufs_list[i].shape[0] > 0:
-            send_handles.append(dist.isend(send_bufs_list[i], p2p_send_to_ranks_list[i]))
+            if mpi4py_available:
+                send_handles.append(comm.Isend(send_bufs_list[i], dest=p2p_send_to_ranks_list[i], tag=11))
     
     # recv data from other ranks
     for i in range(p2p_recv_from_ranks_list.shape[0]):
         if recv_bufs_list[i].shape[0] > 0:
-            recv_handles.append(dist.irecv(recv_bufs_list[i], p2p_recv_from_ranks_list[i]))
+            if mpi4py_available:
+                recv_handles.append(comm.Irecv(recv_bufs_list[i], source=p2p_recv_from_ranks_list[i], tag=11))
     
-    for handle in recv_handles:
-        handle.wait()
-    
+    MPI.Request.Waitall(send_handles)
+    MPI.Request.Waitall(recv_handles)
+    end = time.perf_counter()
+    print("p2p comm time = {}ms".format((end - begin) * 1000.0), flush=True)
+    # print("p2p is finished!")
+
 # def collective_communicate(rank, groups, collective_labels_matrix, \
 #                            comm_matrix, global_rank_to_group_rank, \
 #                            send_data_range_list, recv_data_range_list, \
@@ -242,14 +266,62 @@ def p2p_communicate(rank, p2p_labels_matrix, comm_matirx, \
 #                 total_comm_time_list[n] = (end - begin) * 1000.0
 #             print("average elapsed time of group all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
 
+def collective_communicate_mpi4py(rank, groups, collective_labels_matrix, \
+                                    comm_matrix, global_rank_to_group_rank, \
+                                    send_data_range_list, recv_data_range_list, \
+                                    send_buf, recv_buf, feat_len):
+                                
+    data_send_to_other_rank = comm_matrix[rank]
+    data_recv_from_other_rank = comm_matrix[:, rank]
+
+    send_labels = collective_labels_matrix[rank]
+    recv_labels = collective_labels_matrix[:, rank]
+    
+    num_communicators = np.max(recv_labels) + 1
+
+    print("num_communicators = {}".format(num_communicators))
+
+    for label in range(num_communicators):
+        if groups[label] != MPI.COMM_NULL:
+
+            send_labels[rank] = label
+            recv_labels[rank] = label
+
+            # local_size = groups[label].Get_size()
+            send_rank = (send_labels == label).nonzero()[0]
+            recv_rank = (recv_labels == label).nonzero()[0]
+
+            send_displs = send_data_range_list[send_rank] * feat_len
+            recv_displs = recv_data_range_list[recv_rank] * feat_len
+
+            send_counts = data_send_to_other_rank[send_rank] * feat_len
+            recv_counts = data_recv_from_other_rank[recv_rank] * feat_len
+
+            # print("label = {}, shape of send_buf = {}, shape of send_displs = {}, shape of send_counts = {}".format(label, send_buf.shape, send_displs.shape, send_counts.shape), flush=True)
+            # print("groups[label] = {}".format(groups[label]), flush=True)
+
+            begin = time.perf_counter()
+            groups[label].Alltoallv([send_buf, send_counts, send_displs, MPI.FLOAT], \
+                                    [recv_buf, recv_counts, recv_displs, MPI.FLOAT],)
+            end = time.perf_counter()
+            print("label = {}, collective alltoall time = {}ms".format(label, (end - begin) * 1000.0), flush=True)
+
+    return None
+
 def collective_communicate(rank, groups, collective_labels_matrix, \
                            comm_matrix, global_rank_to_group_rank, \
-                           send_buf, recv_buf, feat_len=128):
-    
+                           send_data_range_list, recv_data_range_list, \
+                           send_buf, recv_buf, feat_len):
+    if mpi4py_available:
+        return collective_communicate_mpi4py(rank, groups, collective_labels_matrix, \
+                                                comm_matrix, global_rank_to_group_rank, \
+                                                send_data_range_list, recv_data_range_list, \
+                                                send_buf, recv_buf, feat_len)
     return test_group_alltoall(rank, groups, collective_labels_matrix, comm_matrix, global_rank_to_group_rank, send_buf, feat_len)
     
 # p2p and collective communication are mixed together
-def test_group_alltoall_v2(rank, groups, collective_labels_matrix, p2p_labels_matrix, comm_matrix, global_rank_to_group_rank, send_buf, feat_len=128):
+def test_group_alltoall_v2(rank, groups, comm, collective_labels_matrix, p2p_labels_matrix, \
+                           comm_matrix, global_rank_to_group_rank, send_buf, feat_len):
     send_data_range_list = np.zeros(comm_matrix.shape[0] + 1, dtype=np.int64)
     recv_data_range_list = np.zeros(comm_matrix.shape[0] + 1, dtype=np.int64)
 
@@ -259,43 +331,73 @@ def test_group_alltoall_v2(rank, groups, collective_labels_matrix, p2p_labels_ma
         send_data_range_list[i+1] = send_data_range_list[i] + comm_matrix[rank, i]
         recv_data_range_list[i+1] = recv_data_range_list[i] + comm_matrix[i, rank]
     
-    # repeat = 11
+    repeat = 21
     # total_comm_time_list = np.zeros(repeat, dtype=np.float32)
+
+    p2p_timer = np.zeros(repeat, dtype=np.float32)
+    collective_timer = np.zeros(repeat, dtype=np.float32)
+    total_timer = np.zeros(repeat, dtype=np.float32)
     
-    # for n in range(repeat):
-    '''
-    p2p_communicate(rank, p2p_labels_matrix, comm_matrix, \
-                    send_data_range_list, recv_data_range_list, \
-                    send_buf, recv_buf, feat_len)
-    '''
+    for n in range(repeat):
+        p2p_begin = time.perf_counter()
+        p2p_communicate(rank, comm, p2p_labels_matrix, comm_matrix, \
+                        send_data_range_list, recv_data_range_list, \
+                        send_buf, recv_buf, feat_len)
+
+        p2p_end = time.perf_counter()
     
+        collective_begin = time.perf_counter()
     
-    collective_communicate(rank, groups, collective_labels_matrix, \
-                            comm_matrix, global_rank_to_group_rank, \
-                            send_buf, recv_buf, feat_len)
+        collective_communicate(rank, groups, collective_labels_matrix, \
+                                comm_matrix, global_rank_to_group_rank, \
+                                send_data_range_list, recv_data_range_list, \
+                                send_buf, recv_buf, feat_len)
 
         # total_comm_time_list[n] = (end - begin)*1000.0
+
+        collective_end = time.perf_counter()
+        
+        p2p_timer[n] = (p2p_end - p2p_begin) * 1000.0
+        collective_timer[n] = (collective_end - collective_begin) * 1000.0
+        total_timer[n] = (collective_end - p2p_begin) * 1000.0
     
-    # print("average elapsed time of group all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
+    print("average elapsed time of p2p comm in ({}) repeats = {}ms".format(repeat - 1, np.mean(p2p_timer[1:])))
+    print("average elapsed time of collective comm in ({}) repeats = {}ms".format(repeat - 1, np.mean(collective_timer[1:])))
+    print("average elapsed time of total group all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_timer[1:])))
 
     return recv_buf
 
     
-def test_original_alltoall(rank, comm_matrix, send_buf, feat_len=128):
+def test_original_alltoall(rank, comm, comm_matrix, send_buf, feat_len):
     send_splits = comm_matrix[rank].tolist()
     recv_splits = comm_matrix[:, rank].tolist()
 
     recv_buf = torch.zeros((sum(recv_splits), feat_len), dtype=torch.float32)
+
+    send_counts = comm_matrix[rank] * feat_len
+    recv_counts = comm_matrix[:, rank] * feat_len
+
+    send_displs = np.zeros(comm_matrix.shape[0], dtype=np.int64)
+    recv_displs = np.zeros(comm_matrix.shape[0], dtype=np.int64)
+
+    for i in range(1, comm_matrix.shape[0]):
+        send_displs[i] = send_displs[i-1] + comm_matrix[rank, i-1] * feat_len
+        recv_displs[i] = recv_displs[i-1] + comm_matrix[i-1, rank] * feat_len
 
     repeat = 21
     total_comm_time_list = np.zeros(repeat, dtype=np.float32)
     
     for i in range(repeat):
         begin = time.perf_counter()
-        handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=True)
-        handle.wait()
-        end = time.perf_counter()
+        if mpi4py_available:
+            comm.Alltoallv([send_buf, send_counts, send_displs, MPI.FLOAT], \
+                            [recv_buf, recv_counts, recv_displs, MPI.FLOAT],)
+        else:
+            handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=True)
+            handle.wait()
 
+        end = time.perf_counter()
+        print("elasped time of all_to_all in rank {} = {}ms".format(rank, (end - begin)*1000.0))
         total_comm_time_list[i] = (end - begin)*1000.0
     print("average elapsed time of original all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
 
@@ -308,7 +410,7 @@ if __name__ == "__main__":
 
     num_clusters = args.num_clusters
 
-    rank, world_size = init_dist_group()
+    comm, rank, world_size = init_dist_group()
 
     # load the collective communication pattern
     collective_label_matrix = np.load('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, world_size))
@@ -329,22 +431,24 @@ if __name__ == "__main__":
                 global_rank_to_group_rank[cluster_id][ranks_list] = np.arange(len(ranks_list), dtype=np.int64)
                 cluster_id += 1
 
-    feat_len = 128
+    feat_len = 64
 
     # print(label_matrix)
     # init subcommunicators for collective communication
-    groups = init_subcommunicator(collective_label_matrix, ranks_list_in_each_cluster)
+    groups = init_subcommunicator(rank, collective_label_matrix, ranks_list_in_each_cluster)
 
     # prepare the send buffer
     send_buf = torch.rand((comm_matirx[rank].sum(), feat_len), dtype=torch.float32)
 
-    res_ref = test_original_alltoall(rank, comm_matirx, send_buf, feat_len)
+    res = test_group_alltoall_v2(rank, groups, comm, collective_label_matrix, p2p_label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
+
+    res_ref = test_original_alltoall(rank, comm, comm_matirx, send_buf, feat_len)
 
     # res = test_group_alltoall(rank, groups, collective_label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
 
-    res = test_group_alltoall_v2(rank, groups, collective_label_matrix, p2p_label_matrix, comm_matirx, global_rank_to_group_rank, send_buf, feat_len)
+    err_idx = torch.nonzero(res != res_ref)
+    print("err_idx = {}".format(err_idx))
 
-    '''
     is_passed = 0
     if torch.allclose(res_ref, res):
         is_passed = 1
@@ -359,4 +463,3 @@ if __name__ == "__main__":
             print("test passed!")
         else:
             print("test failed!")
-    '''

@@ -114,10 +114,8 @@ def divide_group_into_p2p_and_collective(label_matrix):
     return p2p_label_matrix, label_matrix
 
 def remove_large_procs_from_small_clusters(collective_label_matrix):
-    num_clusters = np.max(collective_label_matrix) + 1
     p2p_label_matrix = np.zeros_like(collective_label_matrix)
     new_collective_label_matrix = np.copy(collective_label_matrix)
-    clusters_dict = dict()
     # for i in range(num_clusters):
     #     row_idx, col_idx = np.where(collective_label_matrix == i)
     #     if clusters_dict.get(i) is None:
@@ -132,9 +130,9 @@ def remove_large_procs_from_small_clusters(collective_label_matrix):
         group_idx[cur_proc] = idx
 
     print("group_idx = {}".format(group_idx))
-    print("collective_label_matrix = {}".format(collective_label_matrix))
 
-    for cur_proc in range(num_procs):
+    for src_proc in range(num_procs):
+        '''
         idx = ((collective_label_matrix[cur_proc, :] != group_idx[cur_proc]) & \
                 (collective_label_matrix[cur_proc, :] != -1)).nonzero()[0]
         
@@ -147,6 +145,16 @@ def remove_large_procs_from_small_clusters(collective_label_matrix):
                 new_collective_label_matrix[target_proc, cur_proc] = -1
                 p2p_label_matrix[cur_proc, target_proc] = 1
                 p2p_label_matrix[target_proc, cur_proc] = 1
+        '''
+        for dst_proc in range(num_procs):
+            if group_idx[dst_proc] == group_idx[src_proc]:
+                new_collective_label_matrix[src_proc, dst_proc] = group_idx[src_proc]
+                new_collective_label_matrix[dst_proc, src_proc] = group_idx[src_proc]
+            else:
+                if collective_label_matrix[src_proc, dst_proc] != -1:
+                    new_collective_label_matrix[src_proc, dst_proc] = -1
+                    new_collective_label_matrix[dst_proc, src_proc] = -1
+                    p2p_label_matrix[src_proc, dst_proc] = 1
 
     print("new_collective_label_matrix = {}".format(new_collective_label_matrix))
 
@@ -198,6 +206,27 @@ def find_connected_components(label_matrix):
     
     return label_matrix, cluster_dict
 
+def check_result(collective_label_matrix, p2p_label_matrix, data_volume_matrix):
+    num_procs = data_volume_matrix.shape[0]
+
+    for i in range(num_procs):
+        original_send_data_volume = np.sum(data_volume_matrix[i]) 
+        original_recv_data_volume = np.sum(data_volume_matrix[:, i])
+
+        # collect the nonzero elements in the row i of collective_label_matrix
+        
+        collective_send_data_volume = np.sum(data_volume_matrix[i, collective_label_matrix[i, :] != -1])
+        collective_recv_data_volume = np.sum(data_volume_matrix[collective_label_matrix[i, :] != -1, i])
+
+        p2p_send_data_volume = np.sum(data_volume_matrix[i, p2p_label_matrix[i, :] == 1])
+        p2p_recv_data_volume = np.sum(data_volume_matrix[p2p_label_matrix[i, :] == 1, i])
+
+        assert original_send_data_volume == collective_send_data_volume + p2p_send_data_volume
+        assert original_recv_data_volume == collective_recv_data_volume + p2p_recv_data_volume
+
+    print("check group result passed!")
+
+
 def save_labels(label_list, data_volume_matrix, num_clusters, num_procs):
     # recover the cluster result (the upper triangle of data comm matrix) to original data comm matrix
     label_matrix = recover_cluster_result(label_list, data_volume_matrix)
@@ -223,6 +252,8 @@ def save_labels(label_list, data_volume_matrix, num_clusters, num_procs):
 
     np.save('collective_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), collective_label_matrix)
     np.save('p2p_group_labels({}clusters_{}procs).npy'.format(num_clusters, num_procs), p2p_label_matrix)
+
+    check_result(collective_label_matrix, p2p_label_matrix, data_volume_matrix)
 
     with open('ranks_list_in_each_collective_group({}clusters_{}procs).txt'.format(num_clusters, num_procs), 'w') as f:
         num_keys = len(collective_cluster_dict.keys())
