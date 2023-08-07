@@ -13,26 +13,49 @@ print("MPI vendor = {}".format(MPI.get_vendor()))
 print("MPI version = {}".format(MPI.Get_version()))
 
 def test_async_sendrecv():
-    if rank == 0:
-        req_list = []
-        data = []
-        for i in range(10):
-            data.append(torch.ones(i+1))
-            req = comm.Isend(data[i], dest=1, tag=11)
-            req_list.append(req)
-        MPI.Request.Waitall(req_list)
-        for i in range(10):
-            print("process {} send {}...".format(rank, data[i]))
-    else:
-        req_list = []
-        data = []
-        for i in range(10):
-            data.append(torch.zeros(i+1))
-            req = comm.Irecv(data[i], source=0, tag=11)
-            req_list.append(req)
-        MPI.Request.Waitall(req_list)
-        for i in range(10):
-            print("process {} recv {}...".format(rank, data[i]))
+    # if rank == 0:
+    #     req_list = []
+    #     data = []
+    #     for i in range(10):
+    #         data.append(torch.ones(i+1))
+    #         req = comm.Isend(data[i], dest=1, tag=11)
+    #         req_list.append(req)
+    #     MPI.Request.Waitall(req_list)
+    #     for i in range(10):
+    #         print("process {} send {}...".format(rank, data[i]))
+    # else:
+    #     req_list = []
+    #     data = []
+    #     for i in range(10):
+    #         data.append(torch.zeros(i+1))
+    #         req = comm.Irecv(data[i], source=0, tag=11)
+    #         req_list.append(req)
+    #     MPI.Request.Waitall(req_list)
+    #     for i in range(10):
+    #         print("process {} recv {}...".format(rank, data[i]))
+    send_req_list = []
+    recv_req_list = []
+    send_buf_list = []
+    recv_buf_list = []
+    feat_len = 100
+    send_buf = torch.ones((world_size, feat_len))
+    recv_buf = torch.zeros((world_size, feat_len))
+    for i in range(world_size):
+        send_buf_list.append(send_buf[i:i+1])
+        recv_buf_list.append(recv_buf[i:i+1])
+    
+    for i in range(world_size):
+        req = comm.Isend(send_buf_list[i], dest=i)
+        send_req_list.append(req)
+
+    for i in range(world_size):
+        req = comm.Irecv(recv_buf_list[i], source=i)
+        recv_req_list.append(req)
+    
+    MPI.Request.Waitall(send_req_list)
+    MPI.Request.Waitall(recv_req_list)
+    print("send and recv are finished", flush=True)
+
 
 def test_alltoallv():
     send_counts = np.zeros(world_size, dtype=np.int32)
@@ -103,7 +126,7 @@ def test_subcommunicator():
 
             print("i = {}, alltoallv is finished".format(i), flush=True)
 
-# test_async_sendrecv()
+test_async_sendrecv()
 # test_alltoallv()
-test_subcommunicator()
+# test_subcommunicator()
 
