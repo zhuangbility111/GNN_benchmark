@@ -112,7 +112,8 @@ def divide_group_into_p2p_and_collective(data_volume_matrix, degs_threshold=4):
     print("p2p_ranks_list = {}".format(p2p_ranks_list))
     print("collective_ranks_list = {}".format(collective_ranks_list))
 
-    collective_label_matrix = np.zeros_like(data_volume_matrix)
+    # collective_label_matrix = np.zeros_like(data_volume_matrix)
+    collective_label_matrix = np.full_like(data_volume_matrix, -1)
     p2p_label_matrix = np.zeros_like(data_volume_matrix)
 
     for src_rank in range(num_procs):

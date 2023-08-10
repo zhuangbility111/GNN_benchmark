@@ -223,25 +223,52 @@ def p2p_communicate(rank, comm, p2p_labels_matrix, comm_matirx, \
     send_handles = list()
     recv_handles = list()
 
+    send_data_volume = 0.0
+    recv_data_volume = 0.0
+
+    send_rank_num = p2p_send_to_ranks_list.shape[0]
+    recv_rank_num = p2p_recv_from_ranks_list.shape[0]
+
+    comm.Barrier()
+
     begin = time.perf_counter()
-    # send data to other ranks
-    for send_to_rank in p2p_send_to_ranks_list:
-        if mpi4py_available:
-            send_handles.append(comm.Isend(send_buf[send_data_range_list[send_to_rank]: send_data_range_list[send_to_rank+1]], \
-                                            dest=send_to_rank))
-    
+    irecv_begin = time.perf_counter()
     # recv data from other ranks
     for recv_from_rank in p2p_recv_from_ranks_list:
         if mpi4py_available:
             recv_handles.append(comm.Irecv(recv_buf[recv_data_range_list[recv_from_rank]: recv_data_range_list[recv_from_rank+1]], \
                                            source=recv_from_rank))
+            recv_data_volume += recv_data_range_list[recv_from_rank+1] - recv_data_range_list[recv_from_rank]
     
+    irecv_end = time.perf_counter()
+
+    isend_begin = time.perf_counter()
+    # send data to other ranks
+    for send_to_rank in p2p_send_to_ranks_list:
+        if mpi4py_available:
+            send_handles.append(comm.Isend(send_buf[send_data_range_list[send_to_rank]: send_data_range_list[send_to_rank+1]], \
+                                            dest=send_to_rank))
+            send_data_volume += send_data_range_list[send_to_rank+1] - send_data_range_list[send_to_rank]
+    isend_end = time.perf_counter()
+
     # print("isend and irecv are finished!", flush=True)
 
-    MPI.Request.Waitall(send_handles)
+    wait_recv_begin = time.perf_counter()
     MPI.Request.Waitall(recv_handles)
+    wait_recv_end = time.perf_counter()
+    wait_send_begin = time.perf_counter()
+    MPI.Request.Waitall(send_handles)
+    wait_send_end = time.perf_counter()
     end = time.perf_counter()
+
+    comm.Barrier()
     print("p2p comm time = {}ms".format((end - begin) * 1000.0), flush=True)
+    print("irecv time = {}ms".format((irecv_end - irecv_begin) * 1000.0), flush=True)
+    print("isend time = {}ms".format((isend_end - isend_begin) * 1000.0), flush=True)
+    print("wait recv time = {}ms".format((wait_recv_end - wait_recv_begin) * 1000.0), flush=True)
+    print("wait send time = {}ms".format((wait_send_end - wait_send_begin) * 1000.0), flush=True)
+    print("send_data_rank_num_on_p2p = {}, recv_data_rank_num_on_p2p = {}".format(send_rank_num, recv_rank_num), flush=True)
+    print("send_data_volume_on_p2p = {}, recv_data_volume_on_p2p = {}".format(send_data_volume, recv_data_volume), flush=True)
 
 # def collective_communicate(rank, groups, collective_labels_matrix, \
 #                            comm_matrix, global_rank_to_group_rank, \
@@ -313,6 +340,9 @@ def collective_communicate_mpi4py(rank, groups, collective_labels_matrix, \
 
     print("num_communicators = {}".format(num_communicators))
 
+    send_data_volume = 0.0
+    recv_data_volume = 0.0
+
     for label in range(num_communicators):
         if groups[label] != MPI.COMM_NULL:
 
@@ -332,11 +362,19 @@ def collective_communicate_mpi4py(rank, groups, collective_labels_matrix, \
             # print("label = {}, shape of send_buf = {}, shape of send_displs = {}, shape of send_counts = {}".format(label, send_buf.shape, send_displs.shape, send_counts.shape), flush=True)
             # print("groups[label] = {}".format(groups[label]), flush=True)
 
+            send_data_volume += (np.sum(send_counts) / feat_len)
+            recv_data_volume += (np.sum(recv_counts) / feat_len)
+
+            send_rank_num = send_rank.shape[0]
+            recv_rank_num = recv_rank.shape[0]
+
             begin = time.perf_counter()
             groups[label].Alltoallv([send_buf, send_counts, send_displs, MPI.FLOAT], \
                                     [recv_buf, recv_counts, recv_displs, MPI.FLOAT],)
             end = time.perf_counter()
             print("label = {}, collective alltoall time = {}ms".format(label, (end - begin) * 1000.0), flush=True)
+            print("send_data_rank_num_on_collective = {}, recv_data_rank_num_on_collective = {}".format(send_rank_num, recv_rank_num), flush=True)
+            print("send_data_volume_on_collective = {}, recv_data_volume_on_collective = {}".format(send_data_volume, recv_data_volume), flush=True)
 
     return None
 
@@ -414,6 +452,9 @@ def test_original_alltoall(rank, comm, comm_matrix, send_buf, feat_len):
     send_counts = comm_matrix[rank] * feat_len
     recv_counts = comm_matrix[:, rank] * feat_len
 
+    send_data_volume = np.sum(send_counts) / feat_len
+    recv_data_volume = np.sum(recv_counts) / feat_len
+
     send_displs = np.zeros(comm_matrix.shape[0], dtype=np.int64)
     recv_displs = np.zeros(comm_matrix.shape[0], dtype=np.int64)
 
@@ -435,6 +476,7 @@ def test_original_alltoall(rank, comm, comm_matrix, send_buf, feat_len):
 
         end = time.perf_counter()
         print("elasped time of all_to_all in rank {} = {}ms".format(rank, (end - begin)*1000.0))
+        print("send_data_volume_on_original = {}, recv_data_volume_on_original = {}".format(send_data_volume, recv_data_volume))
         total_comm_time_list[i] = (end - begin)*1000.0
     print("average elapsed time of original all_to_all in ({}) repeats = {}ms".format(repeat - 1, np.mean(total_comm_time_list[1:])))
 
