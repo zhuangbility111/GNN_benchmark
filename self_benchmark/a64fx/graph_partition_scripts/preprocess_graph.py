@@ -7,28 +7,30 @@ import os
 import gc
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dir_path', type=str, default='./', help='The path of father directory.')
+parser.add_argument('--out_dir', type=str, default='./', help='The path of output directory.')
+parser.add_argument('--in_dir', type=str, default='./', help='The path of input (dataset) directory.')
 parser.add_argument('--dataset', type=str, help='The name of input dataset.')
 parser.add_argument('--graph_name', type=str, help='The name of graph.')
 args = parser.parse_args()
-dir_path = args.dir_path
+out_dir = args.out_dir
+in_dir = args.in_dir
 dataset = args.dataset
 graph_name = args.graph_name
 
-dataset = NodePropPredDataset(name = dataset)
+dataset = NodePropPredDataset(name = dataset, root=in_dir)
 graph, node_label = dataset[0]
 num_nodes = graph['num_nodes']
 
 ###### process nodes labels ######
 print(node_label)
 print(node_label.shape)
-# np.savetxt(os.path.join(dir_path, "{}_nodes_label.txt".format(graph_name)), node_label, fmt="%d", delimiter=' ')
-np.save(os.path.join(dir_path, "{}_nodes_label.npy".format(graph_name)), node_label)
+# np.savetxt(os.path.join(out_dir, "{}_nodes_label.txt".format(graph_name)), node_label, fmt="%d", delimiter=' ')
+np.save(os.path.join(out_dir, "{}_nodes_label.npy".format(graph_name)), node_label)
 
 ###### process nodes features ######
 node_feat = graph['node_feat']
-# np.savetxt(os.path.join(dir_path, "{}_nodes_feat.npy".format(graph_name)), node_feat)
-np.save(os.path.join(dir_path, "{}_nodes_feat.npy".format(graph_name)), node_feat)
+# np.savetxt(os.path.join(out_dir, "{}_nodes_feat.npy".format(graph_name)), node_feat)
+np.save(os.path.join(out_dir, "{}_nodes_feat.npy".format(graph_name)), node_feat)
 print(num_nodes)
 print(node_feat.shape)
 del node_feat
@@ -37,12 +39,12 @@ gc.collect()
 ###### process node mask (training, test, validated) ######
 dataset_mask = dataset.get_idx_split()
 train_idx, valid_idx, test_idx = dataset_mask["train"], dataset_mask["valid"], dataset_mask["test"]
-# np.savetxt(os.path.join(dir_path, "{}_nodes_train_idx.txt".format(graph_name)), train_idx, fmt="%d", delimiter=' ')
-np.save(os.path.join(dir_path, "{}_nodes_train_idx.npy".format(graph_name)), train_idx)
-# np.savetxt(os.path.join(dir_path, "{}_nodes_valid_idx.txt".format(graph_name)), valid_idx, fmt="%d", delimiter=' ')
-np.save(os.path.join(dir_path, "{}_nodes_valid_idx.npy".format(graph_name)), valid_idx)
-# np.savetxt(os.path.join(dir_path, "{}_nodes_test_idx.txt".format(graph_name)), test_idx, fmt="%d", delimiter=' ')
-np.save(os.path.join(dir_path, "{}_nodes_test_idx.npy".format(graph_name)), test_idx)
+# np.savetxt(os.path.join(out_dir, "{}_nodes_train_idx.txt".format(graph_name)), train_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(out_dir, "{}_nodes_train_idx.npy".format(graph_name)), train_idx)
+# np.savetxt(os.path.join(out_dir, "{}_nodes_valid_idx.txt".format(graph_name)), valid_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(out_dir, "{}_nodes_valid_idx.npy".format(graph_name)), valid_idx)
+# np.savetxt(os.path.join(out_dir, "{}_nodes_test_idx.txt".format(graph_name)), test_idx, fmt="%d", delimiter=' ')
+np.save(os.path.join(out_dir, "{}_nodes_test_idx.npy".format(graph_name)), test_idx)
 print("save training, valid, test idx successfully.")
 
 ###### process edge ######
@@ -87,7 +89,7 @@ edge_type = torch.zeros(len(src_id), dtype=torch.int64)
 edge_data = torch.stack([src_id, dst_id, original_edge_id, edge_type], 1)
 print(edge_data)
 print(edge_data.shape)
-np.savetxt(os.path.join(dir_path, "{}_edges.txt".format(graph_name)), edge_data.numpy(), fmt='%d', delimiter=' ')
+np.savetxt(os.path.join(out_dir, "{}_edges.txt".format(graph_name)), edge_data.numpy(), fmt='%d', delimiter=' ')
 
 self_loop_src_id = torch.from_numpy(self_loop_src_id)
 self_loop_dst_id = torch.from_numpy(self_loop_dst_id)
@@ -104,22 +106,28 @@ removed_edge_data = torch.stack([torch.cat([self_loop_src_id, duplicate_src_id])
 
 print(removed_edge_data)
 print(removed_edge_data.shape)
-np.savetxt(os.path.join(dir_path, "{}_removed_edges.txt".format(graph_name)), removed_edge_data.numpy(), fmt='%d', delimiter=' ')
+np.savetxt(os.path.join(out_dir, "{}_removed_edges.txt".format(graph_name)), removed_edge_data.numpy(), fmt='%d', delimiter=' ')
 
 ###### process node ######
+node_weight = []
 node_type = torch.zeros(num_nodes, dtype=torch.int64)
-node_weight = torch.ones(num_nodes, dtype=torch.int64)
+node_weight.append(torch.ones(num_nodes, dtype=torch.int64))
+# train_idx will also be used as node weight
+node_train_idx = torch.zeros(num_nodes, dtype=torch.int64)
+node_train_idx[train_idx] = 1
+node_weight.append(node_train_idx)
 node_id = torch.arange(num_nodes, dtype=torch.int64)
-node_data = torch.stack([node_type, node_weight, node_id], 1)
+# node_data = torch.stack([node_type, node_weight, node_id], 1)
+node_data = torch.stack([node_type, node_weight[0], node_weight[1], node_id], 1)
 print(node_data)
 print(node_data.shape)
-np.savetxt(os.path.join(dir_path, "{}_nodes.txt".format(graph_name)), node_data.numpy(), fmt='%d', delimiter=' ')
+np.savetxt(os.path.join(out_dir, "{}_nodes.txt".format(graph_name)), node_data.numpy(), fmt='%d', delimiter=' ')
 
 ###### process stat file ######
-num_node_weights = 1
+num_node_weights = len(node_weight)
 graph_stats = [num_nodes, len(src_id), num_node_weights]
 print(graph_stats)
-with open (os.path.join(dir_path, "{}_stats.txt".format(graph_name)), 'w') as f:
+with open (os.path.join(out_dir, "{}_stats.txt".format(graph_name)), 'w') as f:
 	for i in graph_stats:
 		f.write(str(i))
 		f.write(" ")
