@@ -54,13 +54,13 @@ def cluster_for_result(X, cluster_num):
     centroids_denormalized = centroids
 
     # 绘制聚类结果
-    plt.scatter(X, np.zeros_like(X), c=labels, cmap='viridis')
-    plt.scatter(centroids_denormalized, np.zeros_like(centroids_denormalized), marker='x', color='red', s=100)
-    plt.title('Clustering Result')
-    plt.xlabel('Data')
-    plt.yticks([])
-    plt.show()
-    plt.savefig('cluster_result_{}_normalize.png'.format(cluster_num))
+    # plt.scatter(X, np.zeros_like(X), c=labels, cmap='viridis')
+    # plt.scatter(centroids_denormalized, np.zeros_like(centroids_denormalized), marker='x', color='red', s=100)
+    # plt.title('Clustering Result')
+    # plt.xlabel('Data')
+    # plt.yticks([])
+    # plt.show()
+    # plt.savefig('cluster_result_{}_normalize.png'.format(cluster_num))
     
     labels = adjust_cluster_order(labels, X)
 

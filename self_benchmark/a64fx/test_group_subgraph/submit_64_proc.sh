@@ -8,6 +8,6 @@
 #PJM -S
 
 source ~/gnn/gnn/pytorch/config_env.sh
-dir_stdout="./log"
+dir_stdout="./log/${PJM_MPI_PROC}_proc"
 
 LD_PRELOAD=/home/ra000012/a04083/gnn/gnn/pytorch/scripts/fujitsu/lib/libtcmalloc.so mpirun -np ${PJM_MPI_PROC} -stdout-proc ${dir_stdout}/stdout -stderr-proc ${dir_stdout}/stderr python test_alltoall.py

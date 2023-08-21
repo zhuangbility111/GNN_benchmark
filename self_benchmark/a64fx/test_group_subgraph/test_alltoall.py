@@ -10,7 +10,7 @@ from mpi4py import MPI
 
 import sys
 
-torch.set_num_threads(1)
+# torch.set_num_threads(1)
 mpi4py_available = True
 
 def init_dist_group():
@@ -229,7 +229,7 @@ def p2p_communicate(rank, comm, p2p_labels_matrix, comm_matirx, \
     send_rank_num = p2p_send_to_ranks_list.shape[0]
     recv_rank_num = p2p_recv_from_ranks_list.shape[0]
 
-    comm.Barrier()
+    # comm.Barrier()
 
     begin = time.perf_counter()
     irecv_begin = time.perf_counter()
@@ -261,7 +261,7 @@ def p2p_communicate(rank, comm, p2p_labels_matrix, comm_matirx, \
     wait_send_end = time.perf_counter()
     end = time.perf_counter()
 
-    comm.Barrier()
+    # comm.Barrier()
     print("p2p comm time = {}ms".format((end - begin) * 1000.0), flush=True)
     print("irecv time = {}ms".format((irecv_end - irecv_begin) * 1000.0), flush=True)
     print("isend time = {}ms".format((isend_end - isend_begin) * 1000.0), flush=True)
@@ -269,6 +269,53 @@ def p2p_communicate(rank, comm, p2p_labels_matrix, comm_matirx, \
     print("wait send time = {}ms".format((wait_send_end - wait_send_begin) * 1000.0), flush=True)
     print("send_data_rank_num_on_p2p = {}, recv_data_rank_num_on_p2p = {}".format(send_rank_num, recv_rank_num), flush=True)
     print("send_data_volume_on_p2p = {}, recv_data_volume_on_p2p = {}".format(send_data_volume, recv_data_volume), flush=True)
+
+def init_non_blocking_p2p(rank, comm, p2p_labels_matrix, comm_matirx, \
+                            send_data_range_list, recv_data_range_list, \
+                            send_buf, recv_buf, feat_len):
+    p2p_send_to_ranks_list   = (p2p_labels_matrix[rank, :] == 1).nonzero()[0]
+    p2p_recv_from_ranks_list = (p2p_labels_matrix[:, rank] == 1).nonzero()[0]
+
+    send_handles = list()
+    recv_handles = list()
+
+    for recv_from_rank in p2p_recv_from_ranks_list:
+        if mpi4py_available:
+            recv_handles.append(comm.Recv_init(recv_buf[recv_data_range_list[recv_from_rank]: recv_data_range_list[recv_from_rank+1]], \
+                                                source=recv_from_rank))
+    
+    for send_to_rank in p2p_send_to_ranks_list:
+        if mpi4py_available:
+            send_handles.append(comm.Send_init(send_buf[send_data_range_list[send_to_rank]: send_data_range_list[send_to_rank+1]], \
+                                                dest=send_to_rank))
+
+    return (send_handles, recv_handles)
+
+def p2p_communicate_with_initialization(send_reqs_list, recv_reqs_list):
+    begin = time.perf_counter()
+    irecv_begin = time.perf_counter()
+    MPI.Prequest.Startall(recv_reqs_list)
+    irecv_end = time.perf_counter()
+    isend_begin = time.perf_counter()
+    MPI.Prequest.Startall(send_reqs_list)
+    isend_end = time.perf_counter()
+
+    # print("isend and irecv are finished!", flush=True)
+
+    wait_recv_begin = time.perf_counter()
+    MPI.Prequest.Waitall(recv_reqs_list)
+    wait_recv_end = time.perf_counter()
+    wait_send_begin = time.perf_counter()
+    MPI.Prequest.Waitall(send_reqs_list)
+    wait_send_end = time.perf_counter()
+    end = time.perf_counter()
+
+    # comm.Barrier()
+    print("p2p comm time = {}ms".format((end - begin) * 1000.0))
+    print("irecv time = {}ms".format((irecv_end - irecv_begin) * 1000.0))
+    print("isend time = {}ms".format((isend_end - isend_begin) * 1000.0))
+    print("wait recv time = {}ms".format((wait_recv_end - wait_recv_begin) * 1000.0))
+    print("wait send time = {}ms".format((wait_send_end - wait_send_begin) * 1000.0))
 
 # def collective_communicate(rank, groups, collective_labels_matrix, \
 #                            comm_matrix, global_rank_to_group_rank, \
@@ -412,12 +459,20 @@ def test_group_alltoall_v2(rank, groups, comm, collective_labels_matrix, p2p_lab
     p2p_timer = np.zeros(repeat, dtype=np.float32)
     collective_timer = np.zeros(repeat, dtype=np.float32)
     total_timer = np.zeros(repeat, dtype=np.float32)
+
+    send_reqs_list, recv_reqs_list = init_non_blocking_p2p(rank, comm, p2p_labels_matrix, comm_matrix, \
+                                                            send_data_range_list, recv_data_range_list, \
+                                                            send_buf, recv_buf, feat_len)
     
     for n in range(repeat):
+        comm.Barrier()
+
         p2p_begin = time.perf_counter()
-        p2p_communicate(rank, comm, p2p_labels_matrix, comm_matrix, \
-                        send_data_range_list, recv_data_range_list, \
-                        send_buf, recv_buf, feat_len)
+        # p2p_communicate(rank, comm, p2p_labels_matrix, comm_matrix, \
+        #                 send_data_range_list, recv_data_range_list, \
+        #                 send_buf, recv_buf, feat_len)
+
+        p2p_communicate_with_initialization(send_reqs_list, recv_reqs_list)
 
         p2p_end = time.perf_counter()
     
