@@ -32,12 +32,14 @@ def create_comm_buffer(in_channels, hidden_channels, out_channels, num_send_node
     send_nodes_feat_buf = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float32)
     send_nodes_feat_buf_fp16 = None
     if is_fp16:
-        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float16)
+        # send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.float16)
+        send_nodes_feat_buf_fp16 = torch.zeros((num_send_nodes, max_feat_len), dtype=torch.bfloat16)
 
     recv_nodes_feat_buf = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float32)
     recv_nodes_feat_buf_fp16 = None
     if is_fp16:
-        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float16)
+        # recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.float16)
+        recv_nodes_feat_buf_fp16 = torch.zeros((num_recv_nodes, max_feat_len), dtype=torch.bfloat16)
 
     return send_nodes_feat_buf, send_nodes_feat_buf_fp16, recv_nodes_feat_buf, recv_nodes_feat_buf_fp16
 
@@ -247,8 +249,8 @@ def train(model, optimizer, graph, nodes_feat_list, nodes_label_list,
 
     model.train()
     for epoch in range(num_epochs):
-        optimizer.zero_grad()
         forward_start = time.perf_counter()
+        optimizer.zero_grad()
         out = model(graph, nodes_feat_list)
         backward_start = time.perf_counter()
         loss = F.nll_loss(out[local_train_mask], nodes_label_list[local_train_mask])
