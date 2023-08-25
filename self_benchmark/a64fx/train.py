@@ -4,8 +4,9 @@ import torch.nn.functional as F
 import argparse
 import time
 import yaml
-from models import 
-import commmunicators as comm
+from .model import create_model_and_optimizer, set_random_seed
+from .communicator import init_process_group
+from .data_manager import load_data
 
 def train(model, data, optimizer, num_epochs):
     rank = dist.get_rank()
@@ -20,9 +21,9 @@ def train(model, data, optimizer, num_epochs):
     for epoch in range(num_epochs):
         forward_start = time.perf_counter()
         optimizer.zero_grad()
-        out = model(data.graph, data.nodes_features)
+        out = model(data['graph'], data['nodes_features'])
         backward_start = time.perf_counter()
-        loss = F.nll_loss(out[data.nodes_train_masks], data.nodes_labels[data.nodes_train_masks])
+        loss = F.nll_loss(out[data['nodes_train_masks']], data['nodes_labels'][data['nodes_train_masks']])
         loss.backward()
 
         update_weight_start = time.perf_counter()
@@ -61,9 +62,9 @@ def test(model, data):
     # check accuracy
     model.eval()
     predict_result = []
-    out = model(data.graph, data.nodes_features)
-    for mask in (data.nodes_train_masks, data.nodes_valid_masks, data.nodes_test_masks):
-        num_correct_samples = (out[mask].argmax(-1) == data.nodes_labels[mask]).sum() if mask.size(0) != 0 else 0
+    out = model(data['graph'], data['nodes_features'])
+    for mask in (data['nodes_train_masks'], data['nodes_valid_masks'], data['nodes_test_masks']):
+        num_correct_samples = (out[mask].argmax(-1) == data['nodes_labels'][mask]).sum() if mask.size(0) != 0 else 0
         num_samples = mask.size(0)
         predict_result.append(num_correct_samples) 
         predict_result.append(num_samples)
@@ -89,7 +90,7 @@ if __name__ == "__main__":
     config['is_pre_delay'] = True if args.is_pre_delay == 'true' else False
     print(config)
 
-    init_process_group()
+    rank, world_size = init_process_group()
 
     set_random_seed(config['random_seed'])
     model, optimizer = create_model_and_optimizer(config)
@@ -97,5 +98,3 @@ if __name__ == "__main__":
 
     train(model, data, optimizer, config['num_epochs'])
     test(model, data)
-
-
