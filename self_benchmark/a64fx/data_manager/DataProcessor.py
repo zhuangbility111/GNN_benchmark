@@ -144,7 +144,6 @@ class DataProcessorForPre(object):
             # set the begin node idx and end node idx on current rank i
             begin_idx = begin_node_on_each_subgraph[i]
             end_idx = begin_node_on_each_subgraph[i+1]
-            # print("begin_idx = {}, end_idx = {}".format(begin_idx, end_idx))
             
             src_in_remote_edges = remote_edges_list[0]
             dst_in_remote_edges = remote_edges_list[1]
@@ -160,9 +159,6 @@ class DataProcessorForPre(object):
 
             num_src_nodes = ids_src_nodes.shape[0]
             num_dst_nodes = ids_dst_nodes.shape[0]
-
-            # print("total number of remote src nodes = {}".format(num_src_nodes))
-            # print("total number of remote dst nodes = {}".format(num_dst_nodes))
 
             # accumulate the differences of remote src nodes and local dst nodes
             num_diff_nodes += abs(num_src_nodes - num_dst_nodes)
