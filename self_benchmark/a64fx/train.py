@@ -4,9 +4,9 @@ import torch.nn.functional as F
 import argparse
 import time
 import yaml
-from .model import create_model_and_optimizer, set_random_seed
-from .communicator import init_process_group
-from .data_manager import load_data
+from model import create_model_and_optimizer, set_random_seed
+from communicator import init_dist_group
+from data_manager import load_data
 
 def train(model, data, optimizer, num_epochs):
     rank = dist.get_rank()
@@ -88,13 +88,13 @@ if __name__ == "__main__":
 
     config['is_fp16'] = True if args.is_fp16 == 'true' else False
     config['is_pre_delay'] = True if args.is_pre_delay == 'true' else False
-    print(config)
+    print(config, flush=True)
 
-    rank, world_size = init_process_group()
+    # rank, world_size = init_dist_group()
 
-    set_random_seed(config['random_seed'])
-    model, optimizer = create_model_and_optimizer(config)
-    data = load_data(config)
+    # set_random_seed(config['random_seed'])
+    # model, optimizer = create_model_and_optimizer(config)
+    # data = load_data(config)
 
-    train(model, data, optimizer, config['num_epochs'])
-    test(model, data)
+    # train(model, data, optimizer, config['num_epochs'])
+    # test(model, data)
