@@ -84,17 +84,18 @@ if __name__ == "__main__":
     parser.add_argument('--is_pre_delay', type=str, default='false')
     args = parser.parse_args()
     with open(args.config) as f:
-        config = yaml.load(f)
+        config = yaml.safe_load(f)
 
     config['is_fp16'] = True if args.is_fp16 == 'true' else False
     config['is_pre_delay'] = True if args.is_pre_delay == 'true' else False
     print(config, flush=True)
 
-    # rank, world_size = init_dist_group()
+    rank, world_size = init_dist_group()
 
-    # set_random_seed(config['random_seed'])
-    # model, optimizer = create_model_and_optimizer(config)
-    # data = load_data(config)
+    set_random_seed(config['random_seed'])
+    model, optimizer = create_model_and_optimizer(config)
+    data = load_data(config)
 
+    print("finish data loading.", flush=True)
     # train(model, data, optimizer, config['num_epochs'])
     # test(model, data)

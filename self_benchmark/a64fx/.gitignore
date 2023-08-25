@@ -7,3 +7,5 @@ test_level_partition/
 *.swp
 *.log
 log
+*.out
+*.stats
