@@ -2,8 +2,9 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import time
-from torch_geometric.nn import DistSAGEConvGradWithPre
-from torch_geometric.nn import DistSAGEConvGrad
+# from torch_geometric.nn import DistSAGEConvGradWithPre
+# from torch_geometric.nn import DistSAGEConvGrad
+from Layers.sageconv import DistSAGEConvGrad
 
 class DistSAGE(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, 
@@ -17,11 +18,11 @@ class DistSAGE(torch.nn.Module):
             for _ in range(num_layers - 2):
                 self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, is_fp16))
             self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, is_fp16))
-        else:
-            self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
-            for _ in range(num_layers - 2):
-                self.convs.append(DistSAGEConvGradWithPre(hidden_channels, hidden_channels, is_fp16))
-            self.convs.append(DistSAGEConvGradWithPre(hidden_channels, out_channels, is_fp16))
+        # else:
+        #     self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
+        #     for _ in range(num_layers - 2):
+        #         self.convs.append(DistSAGEConvGradWithPre(hidden_channels, hidden_channels, is_fp16))
+        #     self.convs.append(DistSAGEConvGradWithPre(hidden_channels, out_channels, is_fp16))
 
         self.dropout = dropout
 
