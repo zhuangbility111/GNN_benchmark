@@ -9,6 +9,9 @@ def create_model_and_optimizer(config: dict):
     if config['model_name'] == 'sage':
         model = DistSAGE(config['in_channels'], config['hidden_channels'], config['out_channels'], 
                          config['num_layers'], config['dropout'], config['is_fp16'], config['is_pre_delay'])
+
+        # wrap model with ddp
+        model = torch.nn.parallel.DistributedDataParallel(model)
         
         optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
