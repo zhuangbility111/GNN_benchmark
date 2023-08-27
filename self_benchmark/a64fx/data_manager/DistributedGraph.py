@@ -29,6 +29,7 @@ class DistributedGraphForPre(object):
                  adj_t_pre_post_aggr_to: SparseTensor,
                  pre_post_aggr_from_splits: list,
                  pre_post_aggr_to_splits: list,
+                 in_degrees: Tensor,
                  comm_buf: CommBuffer
                  ) -> None:
 
@@ -39,7 +40,8 @@ class DistributedGraphForPre(object):
         self.pre_post_aggr_from_splits = pre_post_aggr_from_splits
         self.pre_post_aggr_to_splits = pre_post_aggr_to_splits
 
+        self.in_degrees = in_degrees
+
         self.comm_buf = comm_buf
-        # self.in_degrees = get_in_indices(local_adj_t)
 
     

@@ -2,13 +2,12 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 from torch.nn import Parameter
-from torch_sparse import SparseTensor, fill_diag, matmul
+from torch_sparse import fill_diag
 from torch_sparse import sum as sparsesum
 
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.nn.inits import zeros
-from torch_geometric.typing import Adj, OptTensor
 from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
 
 import time
@@ -184,6 +183,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                 remote_nodes_grad_fp16_buf.resize_(num_send_nodes, local_out_grad.size(-1))
                 local_nodes_grad_fp16_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
 
+            remote_nodes_grad_buf.zero_()
             if remote_nodes_grad_buf.size(0) != 0:
                 SPMM_backward(graph.remote_adj_t, local_out_grad, remote_nodes_grad_buf)
 
@@ -240,9 +240,6 @@ class DistSAGEConvGrad(MessagePassing):
 
         self.lin = Linear(in_channels, out_channels, bias=False,
                           weight_initializer='glorot')
-        
-        self.lin = Linear(in_channels, out_channels, bias=False,
-                          weight_initializer='glorot')
 
         if bias:
             self.bias = Parameter(torch.Tensor(out_channels))
@@ -251,6 +248,9 @@ class DistSAGEConvGrad(MessagePassing):
 
         self.reset_parameters()
 
+    def reset_parameters(self):
+        self.lin.reset_parameters()
+        zeros(self.bias)
 
     def propagate(self, graph, local_nodes_feat):
         local_out = aggregate_for_local_and_remote(graph, local_nodes_feat)

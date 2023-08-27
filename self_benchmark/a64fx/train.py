@@ -91,11 +91,12 @@ if __name__ == "__main__":
     print(config, flush=True)
 
     rank, world_size = init_dist_group()
+    config['input_dir'] += '{}_graph_{}_part/'.format(config['graph_name'], world_size)
 
     set_random_seed(config['random_seed'])
     model, optimizer = create_model_and_optimizer(config)
     data = load_data(config)
 
     print("finish data loading.", flush=True)
-    # train(model, data, optimizer, config['num_epochs'])
-    # test(model, data)
+    train(model, data, optimizer, config['num_epochs'])
+    test(model, data)

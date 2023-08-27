@@ -70,11 +70,25 @@ def get_distributed_graph(local_edges_list, remote_edges_list, local_nodes_list,
                                             num_local_nodes_required_by_other.tolist(), \
                                             remote_nodes_num_from_each_subgraph.tolist(), comm_buf)
 
+    print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
+    print("graph.remote_adj_t = {}".format(distributed_graph.remote_adj_t))
+    print("graph.idx_nodes_send_to_others = {}".format(distributed_graph.idx_nodes_send_to_others))
+    print("graph.num_nodes_send_to_others = {}".format(distributed_graph.num_nodes_send_to_others))
+    print("graph.num_nodes_recv_from_others = {}".format(distributed_graph.num_nodes_recv_from_others))
+    print("graph.send_buf.shape = {}".format(distributed_graph.comm_buf.send_buf.shape))
+    print("graph.recv_buf.shape = {}".format(distributed_graph.comm_buf.recv_buf.shape))
+
+    return distributed_graph
+
 def get_distributed_graph_for_pre(local_edges_list, remote_edges_list, nodes_range_on_each_subgraph, \
                                   num_local_nodes, max_feat_len, rank, world_size, is_fp16):
     # local nodes in local_edges_list and remote_edges_list has been localized
     # in order to perform pre_aggregation, the id of local nodes in remote_edges_list must be recover to global id
     remote_edges_list[1] += nodes_range_on_each_subgraph[rank]
+   
+    in_degrees = DataProcessorForPre.get_in_degrees(local_edges_list, remote_edges_list, \
+                                                    num_local_nodes, nodes_range_on_each_subgraph[rank]) 
+
     remote_edges_list_pre_post_aggr_from, remote_edges_list_pre_post_aggr_to, \
     begin_edge_on_each_partition_from, begin_edge_on_each_partition_to, \
     pre_aggr_from_splits, post_aggr_from_splits, \
@@ -104,7 +118,16 @@ def get_distributed_graph_for_pre(local_edges_list, remote_edges_list, nodes_ran
     comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
 
     distributed_graph = DistributedGraphForPre(local_adj_t, adj_t_pre_post_aggr_from, adj_t_pre_post_aggr_to, \
-                                                pre_post_aggr_from_splits, pre_post_aggr_to_splits, comm_buf)
+                                                pre_post_aggr_from_splits, pre_post_aggr_to_splits, in_degrees, comm_buf)
+
+    print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
+    print("graph.adj_t_pre_post_aggr_from = {}".format(distributed_graph.adj_t_pre_post_aggr_from))
+    print("graph.adj_t_pre_post_aggr_to = {}".format(distributed_graph.adj_t_pre_post_aggr_to))
+    print("graph.pre_post_aggr_from_splits = {}".format(distributed_graph.pre_post_aggr_from_splits))
+    print("graph.pre_post_aggr_to_splits = {}".format(distributed_graph.pre_post_aggr_to_splits))
+    print("graph.in_degrees = {}".format(distributed_graph.in_degrees))
+    print("graph.send_buf.shape = {}".format(distributed_graph.comm_buf.send_buf.shape))
+    print("graph.recv_buf.shape = {}".format(distributed_graph.comm_buf.recv_buf.shape))
 
     return distributed_graph
     
@@ -143,4 +166,4 @@ def load_data(config):
     data['nodes_valid_masks'] = valid_mask
     data['nodes_test_masks'] = test_mask
 
-    return data    
+    return data

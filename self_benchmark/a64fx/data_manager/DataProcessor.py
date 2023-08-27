@@ -9,26 +9,27 @@ class DataProcessor(object):
         pass
 
     @staticmethod
-    def sort_remote_edges_array_based_on_remote_nodes(remote_edges_array):
-        remote_edges_row, remote_edges_col = remote_edges_array[0], remote_edges_array[1]
-        sort_index = np.argsort(remote_edges_row)
-        remote_edges_array[0] = remote_edges_row[sort_index]
-        remote_edges_array[1] = remote_edges_col[sort_index]
-        return remote_edges_array
+    def sort_remote_edges_list_based_on_remote_nodes(remote_edges_list):
+        remote_edges_row, remote_edges_col = remote_edges_list[0], remote_edges_list[1]
+        sort_index = torch.argsort(remote_edges_row)
+        remote_edges_list[0] = remote_edges_row[sort_index]
+        remote_edges_list[1] = remote_edges_col[sort_index]
+        return remote_edges_list
 
     @staticmethod
-    def obtain_remote_nodes_list(remote_edges_array, num_local_nodes, num_nodes_on_each_subgraph, world_size):
-        remote_nodes_list = []
+    def obtain_remote_nodes_list(remote_edges_list, num_local_nodes, num_nodes_on_each_subgraph, world_size):
+        remote_nodes_list = list()
         range_of_remote_nodes_on_local_graph = torch.zeros(world_size+1, dtype=torch.int64)
         remote_nodes_num_from_each_subgraph = torch.zeros(world_size, dtype=torch.int64)
-        remote_edges_row = remote_edges_array[0]
+        remote_edges_row = remote_edges_list[0]
 
         part_idx = 0
         local_node_idx = num_local_nodes - 1
         prev_node = -1
         tmp_len = len(remote_edges_row)
         for i in range(0, tmp_len):
-            cur_node = remote_edges_row[i]
+            # need to use the item() rather than the tensor as the tensor is a pointer
+            cur_node = remote_edges_row[i].item()
             if cur_node != prev_node:
                 remote_nodes_list.append(cur_node)
                 local_node_idx += 1
@@ -73,14 +74,24 @@ class DataProcessor(object):
         return local_nodes_required_by_other, num_local_nodes_required_by_other
 
     @staticmethod
-    def transform_edge_index_to_sparse_tensor(local_edges_array, remote_edges_array, num_local_nodes, num_remote_nodes):
-        local_edges_array = SparseTensor(row=local_edges_array[1], col=local_edges_array[0], value=torch.ones(local_edges_array[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_local_nodes))
-        tmp_col = remote_edges_array[0] - num_local_nodes
-        remote_edges_array = SparseTensor(row=remote_edges_array[1], col=tmp_col, value=torch.ones(remote_edges_array[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_remote_nodes))
+    def transform_edge_index_to_sparse_tensor(local_edges_list, remote_edges_list, num_local_nodes, num_remote_nodes):
+        local_edges_list = SparseTensor(row=local_edges_list[1], col=local_edges_list[0], value=torch.ones(local_edges_list[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_local_nodes))
+        tmp_col = remote_edges_list[0] - num_local_nodes
+        remote_edges_list = SparseTensor(row=remote_edges_list[1], col=tmp_col, value=torch.ones(remote_edges_list[1].shape[0], dtype=torch.float32), sparse_sizes=(num_local_nodes, num_remote_nodes))
 
-        return local_edges_array, remote_edges_array
+        return local_edges_list, remote_edges_list
 
 class DataProcessorForPre(object):
+    @staticmethod
+    def get_in_degrees(local_edges_list, remote_edges_list, num_local_nodes, begin_idx_local_nodes):
+        local_degs = torch.zeros((num_local_nodes), dtype=torch.int64)
+        source = torch.ones((local_edges_list[1].shape[0]), dtype=torch.int64)
+        local_degs.index_add_(dim=0, index=local_edges_list[1], source=source)
+        source = torch.ones((remote_edges_list[1].shape[0]), dtype=torch.int64)
+        tmp_index = remote_edges_list[1] - begin_idx_local_nodes
+        local_degs.index_add_(dim=0, index=tmp_index, source=source)
+        return local_degs.unsqueeze(-1)
+
     @staticmethod
     def process_remote_edges_pre_post_aggr_to(is_pre_post_aggr_to, remote_edges_pre_post_aggr_to, world_size):
         remote_edges_list_pre_post_aggr_to = [torch.empty((0), dtype=torch.int64), torch.empty((0), dtype=torch.int64)]
