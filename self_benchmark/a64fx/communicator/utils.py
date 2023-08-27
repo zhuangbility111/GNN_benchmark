@@ -7,6 +7,8 @@ def init_dist_group():
         # backend with mpi
         print("mpi in torch.distributed is available!")
         dist.init_process_group(backend="mpi")
+        # fugaku, reserve 1 thread for asynchronous
+        torch.set_num_threads(11)
     else:
         # backend with torch_ccl
         import torch_ccl
