@@ -26,7 +26,7 @@ class DataProcessor(object):
         part_idx = 0
         local_node_idx = num_local_nodes - 1
         prev_node = -1
-        tmp_len = len(remote_edges_row)
+        tmp_len = remote_edges_row.shape[0]
         for i in range(0, tmp_len):
             # need to use the item() rather than the tensor as the tensor is a pointer
             cur_node = remote_edges_row[i].item()
