@@ -8,6 +8,8 @@ from model import create_model_and_optimizer, set_random_seed
 from communicator import init_dist_group
 from data_manager import load_data
 
+from torch.profiler import profile, record_function, ProfilerActivity
+
 def train(model, data, optimizer, num_epochs):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -17,6 +19,7 @@ def train(model, data, optimizer, num_epochs):
     total_backward_dur = 0
     total_update_weight_dur = 0
 
+    # with profile(activities=[ProfilerActivity.CPU]) as prof:
     model.train()
     for epoch in range(num_epochs):
         forward_start = time.perf_counter()
@@ -36,6 +39,9 @@ def train(model, data, optimizer, num_epochs):
             print("rank: {}, epoch: {}, loss: {}, time: {}".format(rank, epoch, loss.item(), (update_weight_end - forward_start)), flush=True)
     end = time.perf_counter()
     total_training_dur = (end - start)
+
+    # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=20))
+    # prof.export_chrome_trace("trace.json")
     
     total_forward_dur = torch.tensor([total_forward_dur])
     total_backward_dur = torch.tensor([total_backward_dur])
