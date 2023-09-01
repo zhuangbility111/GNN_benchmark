@@ -27,6 +27,9 @@ void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int 
 
     TORCH_CHECK(8 % bits == 0);
 
+    min = min.contiguous();
+    scale = scale.contiguous();
+
     float* input_ptr = input.data_ptr<float>();
     float* min_ptr = min.data_ptr<float>();
     float* scale_ptr = scale.data_ptr<float>();
@@ -88,6 +91,9 @@ void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int 
 
 void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int bits) {
     TORCH_CHECK(8 % bits == 0);
+
+    min = min.contiguous();
+    scale = scale.contiguous();
 
     uint8_t* input_ptr = input.data_ptr<uint8_t>();
     float* min_ptr = min.data_ptr<float>();
