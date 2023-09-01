@@ -4,13 +4,13 @@ import math
 
 torch.set_num_threads(12)
 
-row = 12341
-col = 47
+row = 3677
+col = 77
 size = (row, col)
 
 # data_fp32 = torch.Tensor([[1.0, 2.0, 3.0, 4.0, 5.0], [0.0, 2.0, 1.0, 4.0, 5.0]])
 data_fp32 = torch.randn(size, dtype=torch.float32)
-bits = 4
+bits = 2
 print(data_fp32)
 scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**bits - 1)
 zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
@@ -70,7 +70,7 @@ for i in range(repeat):
 
 for i in range(repeat):
     start = time.perf_counter()
-    data_int8_ref = torch.quantize_per_channel(data_fp32, scale, zero_point, 0, torch.quint8)
+    data_int8_ref = torch.quantize_per_channel(data_fp32, scale, zero_point, 0, torch.quint4x2)
     data_int8 = data_int8_ref.int_repr()
     end = time.perf_counter()
     quantization_time_ref[i] = (end - start) * 1000.0

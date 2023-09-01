@@ -5,11 +5,6 @@
 
 using torch::Tensor;
 
-// a function to round a float to the integer based on the round-to-nearest-even rule
-inline int32_t round_to_nearest_even(float x) {
-    return round(x / 2.0) * 2;
-}
-
 inline int32_t divup(int32_t x, int32_t y) {
 	return (x + y - 1) / y;
 }
@@ -80,7 +75,7 @@ void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int 
         	    for (int k = 0; k < remainder_num_rows; k++) {
 					// printf("k = %d, remainder_num_rows = %d, remider.\n", k, remainder_num_rows);
         	        const int32_t val = 
-        	            round((input_ptr[(row_idx + k) * feat_len + j] - min_ptr[row_idx + k]) / scale_ptr[row_idx + k]);
+        	            std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - min_ptr[row_idx + k]) / scale_ptr[row_idx + k]);
         	        packed_val |= (val << ((elems_per_byte-k-1) * bits));
         	    }
         	    output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
@@ -89,62 +84,7 @@ void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int 
     }
 
     delete [] work_range;
-    // // help me write a function to quantize each row in the input, the quantized function is as follows:
-    // // output[i][j] = round(input[i][j] - min[i]) / scale[i]
-    // #pragma omp parallel for
-    // for (int i = 0; i < vertex_num; i++) {
-    //     for (int j = 0; j < feat_len; j += step) {
-    //         uint8_t packed_val = 0;
-    //         for (int k = 0; k < step; k++) {
-    //             // const int32_t val = round((input_ptr[i*feat_len + j + k] - min_ptr[i]) / scale_ptr[i]);
-    //             const int32_t val = std::nearbyint((input_ptr[i*feat_len + j + k] - min_ptr[i]) / scale_ptr[i]);
-    //             // const int32_t val = std::nearbyint((input_ptr[i*feat_len + j + k] / scale_ptr[i]) + zero_ptr[i]);
-    //             packed_val |= (val << (step-k-1) * bits);
-    //         }
-    //         output_ptr[i*feat_len/step + j/step] = packed_val;
-    //     }
-    // }
 }
-
-// void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, Tensor zero_point, int64_t vertex_num, int64_t feat_len, int bits) {
-//     TORCH_CHECK(8 % bits == 0);
-
-//     uint8_t* input_ptr = input.data_ptr<uint8_t>();
-//     float* min_ptr = min.data_ptr<float>();
-//     float* scale_ptr = scale.data_ptr<float>();
-
-// 	float* zero_ptr = zero_point.data_ptr<float>();
-
-//     float *output_ptr = output.data_ptr<float>();
-
-//     int step = 8 / bits;
-//     int mask = ((1 << bits) - 1);
-
-//     int divisible_feat_len = feat_len - feat_len % step;
-//     int remainder_feat_len = feat_len % step;
-
-//     // help me write a function to dequantize each row in the input, the dequantized function is as follows:
-//     // output[i][j] = input[i][j] * scale[i] + min[i]
-//     #pragma omp parallel for
-//     for (int i = 0; i < vertex_num; i++) {
-//         // handle the divisible part
-//         for (int j = 0; j < divisible_feat_len; j += step) {
-//             uint8_t packed_val = input_ptr[i*feat_len/step + j/step];
-//             for (int k = 0; k < step; k++) {
-//                 const float val = static_cast<float>((packed_val >> (step-k-1) * bits) & mask);
-//                 output_ptr[i*feat_len + j + k] = val * scale_ptr[i] + min_ptr[i];
-//                 // output_ptr[i*feat_len + j + k] = (val - zero_ptr[i]) * scale_ptr[i];
-//             }
-//         }
-
-//         // handle the remainder
-//         uint8_t packed_val = input_ptr[i*feat_len/step + divisible_feat_len/step];
-//         for (int k = 0; k < remainder_feat_len; k++) {
-//             const float val = static_cast<float>((packed_val >> (step-k-1) * bits) & mask);
-//             output_ptr[i*feat_len + divisible_feat_len + k] = val * scale_ptr[i] + min_ptr[i];
-//         }
-//     }
-// }
 
 void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int bits) {
     TORCH_CHECK(8 % bits == 0);
