@@ -86,13 +86,14 @@ def test(model, data):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='config.yaml')
-    parser.add_argument('--is_fp16', type=str, default='false')
+    parser.add_argument('--num_bits', type=int, default=32)
     parser.add_argument('--is_pre_delay', type=str, default='false')
     args = parser.parse_args()
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
-    config['is_fp16'] = True if args.is_fp16 == 'true' else False
+    # config['is_fp16'] = True if args.is_fp16 == 'true' else False
+    config['num_bits'] = args.num_bits
     config['is_pre_delay'] = True if args.is_pre_delay == 'true' else False
     print(config, flush=True)
 

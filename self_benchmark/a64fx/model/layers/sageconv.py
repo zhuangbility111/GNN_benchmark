@@ -10,6 +10,9 @@ from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.nn.inits import zeros
 from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
 
+import quantization_cpu
+import math
+
 import time
 
 class Quantizer(object):
@@ -17,21 +20,27 @@ class Quantizer(object):
         pass
 
     @staticmethod
-    def quantize_fp32_to_int8(data_fp32, data_int8):
+    def quantize_fp32_to_intX(data_fp32, data_int8, num_bits=8):
         quantize_begin = time.perf_counter()
-        scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**8 - 1)
+        scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**num_bits - 1)
         # zero_indices = torch.nonzero(scale == 0).squeeze()
         # print("zero_indices = {}".format(zero_indices))
-        zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
-        data_int8.copy_(torch.quantize_per_channel(data_fp32, scale, zero_point, 0, torch.quint8).int_repr())
+        # zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
+        zero_point = data_fp32.min(dim=1)[0]
+        # ref = torch.quantize_per_channel(data_fp32, scale, zero_point, 0, torch.quint8).int_repr()
+        # data_int8.copy_(torch.quantize_per_channel(data_fp32, scale, zero_point, 0, torch.quint8).int_repr())
+        quantization_cpu.quantize_tensor(data_fp32, data_int8, zero_point, scale, num_bits)
+        print(data_int8)
         quant_param = torch.stack((scale, zero_point), dim=1)
         quantize_end = time.perf_counter()
         print("inner quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
         return quant_param
 
     @staticmethod
-    def dequantize_int8_to_fp32(data_int8, data_fp32, scale, zero_point):
-        data_fp32.copy_((data_int8 - zero_point.view(-1, 1)) * scale.view(-1, 1))
+    def dequantize_intX_to_fp32(data_int8, data_fp32, scale, zero_point, num_bits=8):
+        # data_fp32.copy_((data_int8 - zero_point.view(-1, 1)) * scale.view(-1, 1))
+        quantization_cpu.dequantize_tensor(data_int8, data_fp32, zero_point, scale, num_bits)
+        print(data_fp32)
         # data_fp32.copy_(torch.dequantize(data_int8))
 
 def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
@@ -50,14 +59,12 @@ def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
 
     return local_deg.unsqueeze(-1)
     
-def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_other, 
-                                  recv_nodes_feat_splits, send_nodes_feat_splits,
-                                  recv_nodes_feat_buf, send_nodes_feat_buf,
-                                  recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf):
+def comm_for_remote_nodes(recv_nodes_buf, send_nodes_buf,
+                          recv_nodes_quant_buf, send_nodes_quant_buf, 
+                          recv_nodes_splits, send_nodes_splits,
+                          num_bits):
 
     prepare_send_node_begin = time.perf_counter()
-    # send_nodes_feat_buf = local_nodes_feat.index_select(0, local_nodes_indices_required_by_other)
-    torch.index_select(local_nodes_feat, 0, local_nodes_required_by_other, out=send_nodes_feat_buf)
 
     prepare_recv_node_begin = time.perf_counter()
 
@@ -66,76 +73,34 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
 
     comm_begin = time.perf_counter()
     # handle = dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits, async_op=True)
-    if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
+    if recv_nodes_quant_buf is not None and send_nodes_quant_buf is not None:
         # convert communication data to fp16
         transform_begin = time.perf_counter()
         # send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
         quantize_begin = time.perf_counter()
-        send_quant_param = Quantizer.quantize_fp32_to_int8(send_nodes_feat_buf, send_nodes_feat_fp16_buf)
+        send_quant_param = Quantizer.quantize_fp32_to_intX(send_nodes_buf, send_nodes_quant_buf, num_bits)
         quantize_end = time.perf_counter()
         print("outer quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
-        recv_quant_param = torch.empty((sum(recv_nodes_feat_splits), 2), dtype=torch.float32)
+        recv_quant_param = torch.empty((sum(recv_nodes_splits), 2), dtype=torch.float32)
 
         transform_end = time.perf_counter()
-        dist.all_to_all_single(recv_quant_param, send_quant_param, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
-        '''
-        print("forward_send_scale = {}".format(send_scale))
-        print("forward_send_zero_point = {}".format(send_zero_point))
-        print("forward_recv_scale = {}".format(recv_scale))
-        print("forward_recv_zero_point = {}".format(recv_zero_point))
-        '''
-        handle = dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        dist.all_to_all_single(recv_quant_param, send_quant_param, recv_nodes_splits, send_nodes_splits, async_op=False)
+        handle = dist.all_to_all_single(recv_nodes_quant_buf, send_nodes_quant_buf, recv_nodes_splits, send_nodes_splits, async_op=True)
         # dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
     else:
-        handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        handle = dist.all_to_all_single(recv_nodes_buf, send_nodes_buf, recv_nodes_splits, send_nodes_splits, async_op=True)
         # dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
 
     comm_end = time.perf_counter()
 
-    # print('$$$$')
-    # print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
-    # print("Time of prepare recv data(ms): {}".format((barrier_begin - prepare_recv_node_begin) * 1000.0))
-    # if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
-    #     print("transform data to fp16(ms): {}".format((transform_end - transform_begin) * 1000.0))
-    # print("Time of barrier (all to all)(ms): {}".format((comm_begin - barrier_begin) * 1000.0))
-    # print("Time of comm data (all to all)(ms): {}".format((comm_end - comm_begin) * 1000.0))
-    # print('$$$$')
     print("inner comm data (ms): {}".format((comm_end - prepare_send_node_begin) * 1000.0))
-
-    # return recv_node_feats, handle
-    # return None
     return handle, recv_quant_param[:, 0], recv_quant_param[:, 1]
-
-def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
-                                   recv_nodes_grad_splits, send_nodes_grad_splits,
-                                   recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf):
-    # dist.all_to_all_single(recv_node_grads, send_node_grads, recv_node_grads_splits, send_node_grads_splits)
-    if recv_nodes_grad_fp16_buf is not None and send_nodes_grad_fp16_buf is not None:
-        # convert communication data to fp16
-        # send_nodes_grad_fp16_buf.copy_(send_nodes_grad_buf)
-        send_quant_param = Quantizer.quantize_fp32_to_int8(send_nodes_grad_buf, send_nodes_grad_fp16_buf)
-        recv_quant_param = torch.empty((sum(recv_nodes_grad_splits), 2), dtype=torch.float32)
-        dist.all_to_all_single(recv_quant_param, send_quant_param, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
-        '''
-        print("backward_send_scale = {}".format(send_scale))
-        print("backward_send_zero_point = {}".format(send_zero_point))
-        print("backward_recv_scale = {}".format(recv_scale))
-        print("backward_recv_zero_point = {}".format(recv_zero_point))
-        '''
-        handle = dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
-        # dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
-    else:
-        handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
-        # dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
-
-    # return recv_node_grads, handle
-    return handle, recv_quant_param[:, 0], recv_quant_param[:, 1]
-    # return None
 
 class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, graph, local_nodes_feat):
+    def forward(ctx, graph, local_nodes_feat, num_bits):
         ctx.graph = graph
+        ctx.num_bits = num_bits
     
         prepare_comm_begin = time.perf_counter()
         
@@ -153,15 +118,19 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         if send_nodes_feat_fp16_buf is not None and recv_nodes_feat_fp16_buf is not None and \
            num_send_nodes != 0 and num_recv_nodes != 0:
+            num_send_nodes = math.ceil(num_send_nodes / float(8 / num_bits))
+            num_recv_nodes = math.ceil(num_recv_nodes / float(8 / num_bits))
             send_nodes_feat_fp16_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
             recv_nodes_feat_fp16_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
 
         comm_begin = time.perf_counter()
         if num_send_nodes != 0 and num_recv_nodes != 0:
-            handle, recv_scale, recv_zero_point = comm_for_remote_nodes_forward(local_nodes_feat, graph.idx_nodes_send_to_others,
-                                                    graph.num_nodes_recv_from_others, graph.num_nodes_send_to_others,
-                                                    recv_nodes_feat_buf, send_nodes_feat_buf,
-                                                    recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
+            torch.index_select(local_nodes_feat, 0, graph.idx_nodes_send_to_others, out=send_nodes_feat_buf)
+            handle, recv_scale, recv_zero_point = \
+                    comm_for_remote_nodes(recv_nodes_feat_buf, send_nodes_feat_buf,
+                                          recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf,
+                                          graph.num_nodes_recv_from_others, graph.num_nodes_send_to_others,
+                                          num_bits)
         else:
             handle = None
         
@@ -179,7 +148,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         if recv_nodes_feat_fp16_buf is not None and num_recv_nodes != 0:
             # convert communication data to fp32
             # recv_nodes_feat_buf.copy_(recv_nodes_feat_fp16_buf)
-            Quantizer.dequantize_int8_to_fp32(recv_nodes_feat_fp16_buf, recv_nodes_feat_buf, recv_scale, recv_zero_point)
+            Quantizer.dequantize_intX_to_fp32(recv_nodes_feat_fp16_buf, recv_nodes_feat_buf, recv_scale, recv_zero_point)
 
         remote_aggregate_begin = time.perf_counter()
         remote_nodes_feat = recv_nodes_feat_buf
@@ -212,6 +181,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
     def backward(ctx, local_out_grad):
         graph = ctx.graph
+        num_bits = ctx.num_bits
 
         if ctx.needs_input_grad[1]:
             # scatter gradient to remote nodes
@@ -229,6 +199,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
             if remote_nodes_grad_fp16_buf is not None and local_nodes_grad_fp16_buf is not None and \
                num_send_nodes != 0 and num_recv_nodes != 0:
+                num_send_nodes = math.ceil(num_send_nodes / float(8 / num_bits))
+                num_recv_nodes = math.ceil(num_recv_nodes / float(8 / num_bits))
                 remote_nodes_grad_fp16_buf.resize_(num_send_nodes, local_out_grad.size(-1))
                 local_nodes_grad_fp16_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
 
@@ -238,9 +210,11 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
             # communicate to obtain the local node grads from other subgraph
             if num_send_nodes != 0 and num_recv_nodes != 0:
-                handle, recv_scale, recv_zero_point = comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
-                                                            graph.num_nodes_send_to_others, graph.num_nodes_recv_from_others, 
-                                                            local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf)
+                handle, recv_scale, recv_zero_point = \
+                        comm_for_remote_nodes(local_nodes_grad_buf, remote_nodes_grad_buf,
+                                              local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf,
+                                              graph.num_nodes_send_to_others, graph.num_nodes_recv_from_others, 
+                                              num_bits)
             else:
                 handle = None
             
@@ -254,7 +228,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             if local_nodes_grad_fp16_buf is not None and num_recv_nodes != 0:
                 # convert communication data to fp32
                 # local_nodes_grad_buf.copy_(local_nodes_grad_fp16_buf)
-                Quantizer.dequantize_int8_to_fp32(local_nodes_grad_fp16_buf, local_nodes_grad_buf, recv_scale, recv_zero_point)
+                Quantizer.dequantize_intX_to_fp32(local_nodes_grad_fp16_buf, local_nodes_grad_buf, recv_scale, recv_zero_point, num_bits)
 
             index_add_begin = time.perf_counter()
             # then accumulate the local node grads
@@ -270,13 +244,13 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             #     print("Time of scatter gradient to local nodes(ms): {}".format((index_add_end - index_add_begin) * 1000.0))
             #     print('#########')
 
-        return None, local_nodes_grad
+        return None, local_nodes_grad, None
 
-def aggregate_for_local_and_remote(graph, local_nodes_feat):
-    return Aggregate_for_local_and_remote.apply(graph, local_nodes_feat)
+def aggregate_for_local_and_remote(graph, local_nodes_feat, num_bits):
+    return Aggregate_for_local_and_remote.apply(graph, local_nodes_feat, num_bits)
 
 class DistSAGEConvGrad(MessagePassing):
-    def __init__(self, in_channels: int, out_channels: int, is_fp16: bool = False, \
+    def __init__(self, in_channels: int, out_channels: int, num_bits: int = 32, \
                  add_self_loops: bool = False, normalize: bool = True, bias: bool = True, **kwargs):
         kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
@@ -286,7 +260,7 @@ class DistSAGEConvGrad(MessagePassing):
         self.add_self_loops = add_self_loops
         self.normalize = normalize
         self.local_deg = None
-        self.is_fp16 = is_fp16
+        self.num_bits = num_bits
 
         self.lin = Linear(in_channels, out_channels, bias=False,
                           weight_initializer='glorot')
@@ -302,18 +276,13 @@ class DistSAGEConvGrad(MessagePassing):
         self.lin.reset_parameters()
         zeros(self.bias)
 
-    def propagate(self, graph, local_nodes_feat):
-        local_out = aggregate_for_local_and_remote(graph, local_nodes_feat)
+    def propagate(self, graph, local_nodes_feat, num_bits):
+        local_out = aggregate_for_local_and_remote(graph, local_nodes_feat, num_bits)
         return local_out
 
     def forward(self, graph, local_nodes_feat) -> Tensor:
         """"""
         norm_begin = time.perf_counter()
-        if self.normalize:
-            local_deg = self.local_deg
-            if local_deg is None:
-                local_deg = get_deg(graph.local_adj_t, graph.remote_adj_t, self.add_self_loops)
-                self.local_deg = local_deg
 
         # communication first
         # linear_first = self.in_channels > self.out_channels
@@ -323,12 +292,18 @@ class DistSAGEConvGrad(MessagePassing):
         local_nodes_feat = self.lin(local_nodes_feat)
 
         propagate_begin = time.perf_counter()
-        out = self.propagate(graph, local_nodes_feat)
+        out = self.propagate(graph, local_nodes_feat, self.num_bits)
 
         add_bias_begin = time.perf_counter()
         print("outer propagate forward (ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
         out += local_nodes_feat
-        out /= (local_deg + 1)
+
+        if self.normalize:
+            local_deg = self.local_deg
+            if local_deg is None:
+                local_deg = get_deg(graph.local_adj_t, graph.remote_adj_t, self.add_self_loops)
+                self.local_deg = local_deg
+            out /= (local_deg + 1)
 
         # if not linear_first:
         #     out = self.lin(out)
