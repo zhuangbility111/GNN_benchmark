@@ -134,7 +134,9 @@ def get_distributed_graph_for_pre(local_edges_list, remote_edges_list, nodes_ran
 def load_data(config):
     input_dir = config['input_dir']
     graph_name = config['graph_name']
-    is_fp16 = config['is_fp16']
+    # is_fp16 = config['is_fp16']
+    num_bits = config['num_bits']
+    is_fp16 = True if num_bits != 32 else False
     is_pre_delay = config['is_pre_delay']
     in_channels = config['in_channels']
     hidden_channels = config['hidden_channels']

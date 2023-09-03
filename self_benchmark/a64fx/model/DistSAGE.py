@@ -10,20 +10,20 @@ from .layers.sageconv import DistSAGEConvGrad
 class DistSAGE(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, 
                  num_layers=3, dropout=0.5,
-                 is_fp16=False, is_pre_delay=False):
+                 num_bits=32, is_pre_delay=False):
         super().__init__()
 
         self.convs = torch.nn.ModuleList()
         if not is_pre_delay:
-            self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels, is_fp16))
+            self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels, num_bits))
             for _ in range(num_layers - 2):
-                self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, is_fp16))
-            self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, is_fp16))
-        else:
-            self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
-            for _ in range(num_layers - 2):
-                self.convs.append(DistSAGEConvGradWithPre(hidden_channels, hidden_channels, is_fp16))
-            self.convs.append(DistSAGEConvGradWithPre(hidden_channels, out_channels, is_fp16))
+                self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, num_bits))
+            self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, num_bits))
+        # else:
+        #     self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
+        #     for _ in range(num_layers - 2):
+        #         self.convs.append(DistSAGEConvGradWithPre(hidden_channels, hidden_channels, is_fp16))
+        #     self.convs.append(DistSAGEConvGradWithPre(hidden_channels, out_channels, is_fp16))
 
         self.dropout = dropout
 

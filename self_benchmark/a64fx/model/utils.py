@@ -8,7 +8,7 @@ def create_model_and_optimizer(config: dict):
     optimizer = None
     if config['model_name'] == 'sage':
         model = DistSAGE(config['in_channels'], config['hidden_channels'], config['out_channels'], 
-                         config['num_layers'], config['dropout'], config['is_fp16'], config['is_pre_delay'])
+                         config['num_layers'], config['dropout'], config['num_bits'], config['is_pre_delay'])
 
         # wrap model with ddp
         model = torch.nn.parallel.DistributedDataParallel(model)
