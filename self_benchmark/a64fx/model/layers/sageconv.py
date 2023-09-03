@@ -40,6 +40,14 @@ class Quantizer(object):
     def get_quantized_buffer_size(num_comm_nodes, num_bits):
         return math.ceil(num_comm_nodes / float(8 / num_bits))
 
+class Assigner(object):
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def assign_node_dataformat_randomly(node_dataformat_list, weights):
+        torch.multinomial(weights, len(node_dataformat_list), replacement=True, out=node_dataformat_list)
+
 class Communicator(object):
     def __init__(self) -> None:
         pass
@@ -84,15 +92,25 @@ class Communicator(object):
 
         quantize_end = time.perf_counter()
         print("outer quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
-        # comm for quantized params (scale and zero_point)
-        dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
-        # comm for quantized data
-        handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=True)
-        comm_end = time.perf_counter()
-        print("inner comm data (ms): {}".format((comm_end - quantize_begin) * 1000.0))
-        
-        return handle
 
+        barrier_begin = time.perf_counter()
+        dist.barrier()
+        barrier_end = time.perf_counter()
+        print("barrier (ms): {}".format((barrier_end - barrier_begin) * 1000.0))
+        # comm for quantized params (scale and zero_point)
+        comm_for_param_begin = time.perf_counter()
+        dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
+        comm_for_param_end = time.perf_counter()
+        print("inner comm for param (ms): {}".format((comm_for_param_end - comm_for_param_begin) * 1000.0))
+        comm_for_data_begin = time.perf_counter()
+        # comm for quantized data
+        dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
+        comm_end = time.perf_counter()
+        print("inner comm for data (ms): {}".format((comm_end - comm_for_data_begin) * 1000.0))
+        print("inner total comm (ms): {}".format((comm_end - quantize_begin) * 1000.0))
+        
+        return None
+    
     @staticmethod
     def convert_data_to_fp32(recv_quant_data_buf_list, recv_buf, recv_splits, recv_quant_param_buf_list, num_bits, world_size):
         begin_idx = 0
@@ -167,7 +185,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             handle = None
         
         comm_end = time.perf_counter()
-        print("outer comm data (ms): {}".format((comm_end - comm_begin) * 1000.0))
+        print("outer total comm (ms): {}".format((comm_end - comm_begin) * 1000.0))
         out = torch.zeros([graph.local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
         local_aggregate_begin = time.perf_counter()
         # aggregate message from local nodes
@@ -179,12 +197,16 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
  
         # print(recv_quant_data_buf_list)
         # convert communication data to fp32
+
+        convert_data_begin = time.perf_counter()
         if num_bits != 32 and num_recv_nodes != 0:
-            print("recv_quant_data_buf_list[0].shape = {}".format(recv_quant_data_buf_list[0].shape)) 
+            # print("recv_quant_data_buf_list[0].shape = {}".format(recv_quant_data_buf_list[0].shape)) 
             # recv_nodes_feat_buf.copy_(recv_nodes_feat_fp16_buf)
             Communicator.convert_data_to_fp32(recv_quant_data_buf_list, recv_nodes_feat_buf,
                                               graph.num_nodes_recv_from_others, recv_quant_param_buf_list,
                                               num_bits, world_size)
+        convert_data_end = time.perf_counter()
+        print("inner convert data (ms): {}".format((convert_data_end - convert_data_begin) * 1000.0))
             
         remote_aggregate_begin = time.perf_counter()
         remote_nodes_feat = recv_nodes_feat_buf
