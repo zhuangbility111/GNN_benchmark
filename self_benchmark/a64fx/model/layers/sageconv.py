@@ -15,6 +15,10 @@ import math
 
 import time
 
+def print_time(rank, message, time):
+    if rank == 0:
+        print("{}: {}".format(message, time))
+
 class Quantizer(object):
     def __init__(self):
         pass
@@ -28,7 +32,8 @@ class Quantizer(object):
         # print(data_int8)
         quant_param = torch.stack((scale, zero_point), dim=1)
         quantize_end = time.perf_counter()
-        print("inner quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
+        # print("inner quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
+        print_time(dist.get_rank(), "inner quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
         return quant_param
 
     @staticmethod
@@ -81,35 +86,44 @@ class Communicator(object):
             send_quant_data_buf_list.append(torch.empty(num_send_nodes, send_buf.size(-1), dtype=torch.uint8))
             recv_quant_data_buf_list.append(torch.empty(num_recv_nodes, recv_buf.size(-1), dtype=torch.uint8))
 
-            # quantize the data
-            send_quant_param = Quantizer.quantize_fp32_to_intX(send_buf[send_begin_idx: send_end_idx], 
-                                                               send_quant_data_buf_list[rank], num_bits)
+            if num_send_nodes > 0:
+                # quantize the data
+                send_quant_param = Quantizer.quantize_fp32_to_intX(send_buf[send_begin_idx: send_end_idx], 
+                                                                send_quant_data_buf_list[rank], num_bits)
+            else: 
+                send_quant_param = torch.empty((send_splits[rank], 2), dtype=torch.float32)
             recv_quant_param = torch.empty((recv_splits[rank], 2), dtype=torch.float32)
             
             # collect the quantized params (scale and zero_point)
             send_quant_param_buf_list.append(send_quant_param)
             recv_quant_param_buf_list.append(recv_quant_param)
 
+        rank = dist.get_rank()
         quantize_end = time.perf_counter()
-        print("outer quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
+        print_time(rank, "outer quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
+        # print("outer quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
 
         barrier_begin = time.perf_counter()
         dist.barrier()
         barrier_end = time.perf_counter()
-        print("barrier (ms): {}".format((barrier_end - barrier_begin) * 1000.0))
+        print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
+        # print("barrier (ms): {}".format((barrier_end - barrier_begin) * 1000.0))
         # comm for quantized params (scale and zero_point)
         comm_for_param_begin = time.perf_counter()
         dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
         comm_for_param_end = time.perf_counter()
-        print("inner comm for param (ms): {}".format((comm_for_param_end - comm_for_param_begin) * 1000.0))
+        print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
+        # print("inner comm for param (ms): {}".format((comm_for_param_end - comm_for_param_begin) * 1000.0))
         comm_for_data_begin = time.perf_counter()
         # comm for quantized data
-        dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
+        handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=True)
         comm_end = time.perf_counter()
-        print("inner comm for data (ms): {}".format((comm_end - comm_for_data_begin) * 1000.0))
-        print("inner total comm (ms): {}".format((comm_end - quantize_begin) * 1000.0))
+        print_time(rank, "inner comm for data (ms): ", (comm_end - comm_for_data_begin) * 1000.0)
+        print_time(rank, "inner total comm (ms): ", (comm_end - quantize_begin) * 1000.0)
+        # print("inner comm for data (ms): {}".format((comm_end - comm_for_data_begin) * 1000.0))
+        # print("inner total comm (ms): {}".format((comm_end - quantize_begin) * 1000.0))
         
-        return None
+        return handle
     
     @staticmethod
     def convert_data_to_fp32(recv_quant_data_buf_list, recv_buf, recv_splits, recv_quant_param_buf_list, num_bits, world_size):
@@ -120,9 +134,10 @@ class Communicator(object):
             end_idx += recv_splits[rank]
             scale = recv_quant_param_buf_list[rank][:, 0]
             zero_point = recv_quant_param_buf_list[rank][:, 1]
-            Quantizer.dequantize_intX_to_fp32(recv_quant_data_buf_list[rank], 
-                                              recv_buf[begin_idx: end_idx], 
-                                              scale, zero_point, num_bits)
+            if end_idx - begin_idx > 0:
+                Quantizer.dequantize_intX_to_fp32(recv_quant_data_buf_list[rank], 
+                                                recv_buf[begin_idx: end_idx], 
+                                                scale, zero_point, num_bits)
 
 def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
     if not local_adj_t.has_value():
@@ -185,7 +200,9 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             handle = None
         
         comm_end = time.perf_counter()
-        print("outer total comm (ms): {}".format((comm_end - comm_begin) * 1000.0))
+        rank = dist.get_rank()
+        print_time(rank, "outer total comm (ms): ", (comm_end - comm_begin) * 1000.0)
+        # print("outer total comm (ms): {}".format((comm_end - comm_begin) * 1000.0))
         out = torch.zeros([graph.local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
         local_aggregate_begin = time.perf_counter()
         # aggregate message from local nodes
@@ -199,6 +216,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         # convert communication data to fp32
 
         convert_data_begin = time.perf_counter()
+        print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
         if num_bits != 32 and num_recv_nodes != 0:
             # print("recv_quant_data_buf_list[0].shape = {}".format(recv_quant_data_buf_list[0].shape)) 
             # recv_nodes_feat_buf.copy_(recv_nodes_feat_fp16_buf)
@@ -206,7 +224,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                               graph.num_nodes_recv_from_others, recv_quant_param_buf_list,
                                               num_bits, world_size)
         convert_data_end = time.perf_counter()
-        print("inner convert data (ms): {}".format((convert_data_end - convert_data_begin) * 1000.0))
+        print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
+        # print("inner convert data (ms): {}".format((convert_data_end - convert_data_begin) * 1000.0))
             
         remote_aggregate_begin = time.perf_counter()
         remote_nodes_feat = recv_nodes_feat_buf
@@ -216,7 +235,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         sum_message_end = time.perf_counter()
 
-        print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
+        print_time(rank, "inner propagate forward (ms): ", (sum_message_end - prepare_comm_begin) * 1000.0)
+        # print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
 
         # return local_out
         return out
@@ -342,7 +362,8 @@ class DistSAGEConvGrad(MessagePassing):
         out = self.propagate(graph, local_nodes_feat, self.num_bits)
 
         add_bias_begin = time.perf_counter()
-        print("outer propagate forward (ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
+        print_time(dist.get_rank(), "outer propagate forward (ms): ", (add_bias_begin - propagate_begin) * 1000.0)
+        # print("outer propagate forward (ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
         out += local_nodes_feat
 
         if self.normalize:
