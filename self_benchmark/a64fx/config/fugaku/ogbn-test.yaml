@@ -1,0 +1,12 @@
+input_dir : "./dataset/ogbn_test_new/"
+graph_name : "test"
+model_name : "sage"
+in_channels : 4
+hidden_channels : 10
+out_channels : 50
+num_layers : 3
+dropout : 0.5
+lr : 0.01
+weight_decay : 0
+num_epochs : 10
+random_seed : 0

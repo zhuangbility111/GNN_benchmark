@@ -70,13 +70,13 @@ def get_distributed_graph(local_edges_list, remote_edges_list, local_nodes_list,
                                             num_local_nodes_required_by_other.tolist(), \
                                             remote_nodes_num_from_each_subgraph.tolist(), comm_buf)
 
-    print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
-    print("graph.remote_adj_t = {}".format(distributed_graph.remote_adj_t))
-    print("graph.idx_nodes_send_to_others = {}".format(distributed_graph.idx_nodes_send_to_others))
-    print("graph.num_nodes_send_to_others = {}".format(distributed_graph.num_nodes_send_to_others))
-    print("graph.num_nodes_recv_from_others = {}".format(distributed_graph.num_nodes_recv_from_others))
-    print("graph.send_buf.shape = {}".format(distributed_graph.comm_buf.send_buf.shape))
-    print("graph.recv_buf.shape = {}".format(distributed_graph.comm_buf.recv_buf.shape))
+    # print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
+    # print("graph.remote_adj_t = {}".format(distributed_graph.remote_adj_t))
+    # print("graph.idx_nodes_send_to_others = {}".format(distributed_graph.idx_nodes_send_to_others))
+    # print("graph.num_nodes_send_to_others = {}".format(distributed_graph.num_nodes_send_to_others))
+    # print("graph.num_nodes_recv_from_others = {}".format(distributed_graph.num_nodes_recv_from_others))
+    # print("graph.send_buf.shape = {}".format(distributed_graph.comm_buf.send_buf.shape))
+    # print("graph.recv_buf.shape = {}".format(distributed_graph.comm_buf.recv_buf.shape))
 
     return distributed_graph
 
