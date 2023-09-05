@@ -33,7 +33,7 @@ def train(model, data, optimizer, num_epochs):
         total_backward_dur += update_weight_start - backward_start
         total_update_weight_dur += update_weight_end - update_weight_start
         if rank == 0:
-            print("rank: {}, epoch: {}, loss: {}, time: {}".format(rank, epoch, loss.item(), (update_weight_end - forward_start)), flush=True)
+            print("rank: {}, epoch: {}, loss: {}, time(s): {} ".format(rank, epoch, loss.item(), (update_weight_end - forward_start)), flush=True)
     end = time.perf_counter()
     total_training_dur = (end - start)
     
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     print(config, flush=True)
 
     rank, world_size = init_dist_group()
-    config['input_dir'] += '{}_graph_{}_part/'.format(config['graph_name'], world_size)
+    config['input_dir'] += 'ogbn_{}_{}_part/'.format(config['graph_name'], world_size)
 
     set_random_seed(config['random_seed'])
     model, optimizer = create_model_and_optimizer(config)
