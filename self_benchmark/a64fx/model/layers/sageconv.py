@@ -14,6 +14,11 @@ import quantization_cpu
 import math
 
 import time
+import sys
+
+sys.path.append("../../")
+
+from TimeRecorder import TimeRecorder as time_recorder
 
 def print_time(rank, message, time):
     if rank == 0:
@@ -25,15 +30,21 @@ class Quantizer(object):
 
     @staticmethod
     def quantize_fp32_to_intX(data_fp32, data_int8, num_bits=8):
-        quantize_begin = time.perf_counter()
-        scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**num_bits - 1)
+        total_quantize_begin = time.perf_counter()
         zero_point = data_fp32.min(dim=1)[0]
+        scale = (data_fp32.max(dim=1)[0] - zero_point + 10e-20) / (2**num_bits - 1)
+        inner_quantize_begin = time.perf_counter()
         quantization_cpu.quantize_tensor(data_fp32, data_int8, zero_point, scale, num_bits)
+        inner_quantize_end = time.perf_counter()
         # print(data_int8)
         quant_param = torch.stack((scale, zero_point), dim=1)
-        quantize_end = time.perf_counter()
+        total_quantize_end = time.perf_counter()
         # print("inner quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
-        print_time(dist.get_rank(), "inner quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
+        print_time(dist.get_rank(), "data_fp32.shape", data_fp32.shape)
+        print_time(dist.get_rank(), "inner prepare data for quantization(ms): ", (inner_quantize_begin - total_quantize_begin) * 1000.0)
+        print_time(dist.get_rank(), "inner inner quantize data(ms): ", (inner_quantize_end - inner_quantize_begin) * 1000.0)
+        print_time(dist.get_rank(), "inner stack data(ms): ", (total_quantize_end - inner_quantize_end) * 1000.0)
+        print_time(dist.get_rank(), "inner quantize data(ms): ", (total_quantize_end - total_quantize_begin) * 1000.0)
         return quant_param
 
     @staticmethod
@@ -59,7 +70,34 @@ class Communicator(object):
 
     @staticmethod
     def comm_with_fp32(recv_buf, send_buf, recv_splits, send_splits):
-        handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=True)
+        barrier_begin = time.perf_counter()
+        dist.barrier()
+        barrier_end = time.perf_counter()
+        comm_begin = time.perf_counter()
+        handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=False)
+        comm_end = time.perf_counter()
+        time_recorder.ctx.record_barrier_time(barrier_end - barrier_begin)
+        time_recorder.ctx.record_communication_time(comm_end - comm_begin)
+        return handle
+
+    @staticmethod
+    def comm_with_fp16(recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits):
+        quantization_begin = time.perf_counter()
+        send_buf_fp16.copy_(send_buf)
+        quantization_end = time.perf_counter()
+        barrier_begin = time.perf_counter()
+        dist.barrier()
+        barrier_end = time.perf_counter()
+        comm_begin = time.perf_counter()
+        handle = dist.all_to_all_single(recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, async_op=False)
+        comm_end = time.perf_counter()
+        dequantization_begin = time.perf_counter()
+        recv_buf.copy_(recv_buf_fp16)
+        dequantization_end = time.perf_counter()
+        time_recorder.ctx.record_quantization_time(quantization_end - quantization_begin)
+        time_recorder.ctx.record_barrier_time(barrier_end - barrier_begin)
+        time_recorder.ctx.record_communication_time(comm_end - comm_begin)
+        time_recorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)
         return handle
 
     @staticmethod
@@ -100,33 +138,32 @@ class Communicator(object):
 
         rank = dist.get_rank()
         quantize_end = time.perf_counter()
-        print_time(rank, "outer quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
-        # print("outer quantize data(ms): {}".format((quantize_end - quantize_begin) * 1000.0))
+        # print_time(rank, "outer quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
+        print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
 
         barrier_begin = time.perf_counter()
         dist.barrier()
         barrier_end = time.perf_counter()
-        print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
-        # print("barrier (ms): {}".format((barrier_end - barrier_begin) * 1000.0))
+        # print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
         # comm for quantized params (scale and zero_point)
-        comm_for_param_begin = time.perf_counter()
+        comm_begin = time.perf_counter()
         dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
-        comm_for_param_end = time.perf_counter()
-        print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
-        # print("inner comm for param (ms): {}".format((comm_for_param_end - comm_for_param_begin) * 1000.0))
-        comm_for_data_begin = time.perf_counter()
+        # print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
         # comm for quantized data
-        handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=True)
+        handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
         comm_end = time.perf_counter()
-        print_time(rank, "inner comm for data (ms): ", (comm_end - comm_for_data_begin) * 1000.0)
-        print_time(rank, "inner total comm (ms): ", (comm_end - quantize_begin) * 1000.0)
-        # print("inner comm for data (ms): {}".format((comm_end - comm_for_data_begin) * 1000.0))
-        # print("inner total comm (ms): {}".format((comm_end - quantize_begin) * 1000.0))
+
+        time_recorder.ctx.record_quantization_time(quantize_end - quantize_begin)
+        time_recorder.ctx.record_barrier_time(barrier_end - barrier_begin)
+        time_recorder.ctx.record_communication_time(comm_end - comm_begin)
+        # print_time(rank, "inner comm for data (ms): ", (comm_end - comm_for_data_begin) * 1000.0)
+        # print_time(rank, "inner total comm (ms): ", (comm_end - quantize_begin) * 1000.0)
         
         return handle
     
     @staticmethod
     def convert_data_to_fp32(recv_quant_data_buf_list, recv_buf, recv_splits, recv_quant_param_buf_list, num_bits, world_size):
+        dequantize_begin = time.perf_counter()
         begin_idx = 0
         end_idx = 0
         for rank in range(world_size):
@@ -138,6 +175,9 @@ class Communicator(object):
                 Quantizer.dequantize_intX_to_fp32(recv_quant_data_buf_list[rank], 
                                                 recv_buf[begin_idx: end_idx], 
                                                 scale, zero_point, num_bits)
+        dequantize_end = time.perf_counter()
+        print_time(dist.get_rank(), "inner dequantize data (ms): ", (dequantize_end - dequantize_begin) * 1000.0)
+        time_recorder.ctx.record_dequantization_time(dequantize_end - dequantize_begin)
 
 def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
     if not local_adj_t.has_value():
@@ -169,11 +209,17 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         send_nodes_feat_buf = graph.comm_buf.send_buf
         recv_nodes_feat_buf = graph.comm_buf.recv_buf
 
-        send_nodes_feat_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
-        recv_nodes_feat_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
-
         # send_nodes_feat_quantized_buf = graph.comm_buf.send_buf_fp16
         # recv_nodes_feat_quantized_buf = graph.comm_buf.recv_buf_fp16
+
+        send_nodes_feat_fp16_buf = graph.comm_buf.send_buf_fp16
+        recv_nodes_feat_fp16_buf = graph.comm_buf.recv_buf_fp16
+
+        # send_nodes_feat_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
+        # recv_nodes_feat_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
+
+        graph.comm_buf.resize_buffer((num_send_nodes, local_nodes_feat.size(-1)),
+                                    (num_recv_nodes, local_nodes_feat.size(-1)))
 
         world_size = dist.get_world_size()
         send_quant_data_buf_list = list()
@@ -189,6 +235,10 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             if num_bits == 32:
                 handle = Communicator.comm_with_fp32(recv_nodes_feat_buf, send_nodes_feat_buf,
                                                      graph.num_nodes_recv_from_others, graph.num_nodes_send_to_others)
+            elif num_bits == 16:
+                handle = Communicator.comm_with_fp16(recv_nodes_feat_buf, send_nodes_feat_buf,
+                                                        recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf,
+                                                        graph.num_nodes_recv_from_others, graph.num_nodes_send_to_others)
             else:
                 handle = \
                     Communicator.comm_with_quantization(recv_nodes_feat_buf, send_nodes_feat_buf,
@@ -216,15 +266,15 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         # convert communication data to fp32
 
         convert_data_begin = time.perf_counter()
-        print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
-        if num_bits != 32 and num_recv_nodes != 0:
+        # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
+        if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0:
             # print("recv_quant_data_buf_list[0].shape = {}".format(recv_quant_data_buf_list[0].shape)) 
             # recv_nodes_feat_buf.copy_(recv_nodes_feat_fp16_buf)
             Communicator.convert_data_to_fp32(recv_quant_data_buf_list, recv_nodes_feat_buf,
                                               graph.num_nodes_recv_from_others, recv_quant_param_buf_list,
                                               num_bits, world_size)
         convert_data_end = time.perf_counter()
-        print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
+        # print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
         # print("inner convert data (ms): {}".format((convert_data_end - convert_data_begin) * 1000.0))
             
         remote_aggregate_begin = time.perf_counter()
@@ -236,6 +286,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         sum_message_end = time.perf_counter()
 
         print_time(rank, "inner propagate forward (ms): ", (sum_message_end - prepare_comm_begin) * 1000.0)
+        time_recorder.ctx.record_total_convolution_time(sum_message_end - prepare_comm_begin)
+        time_recorder.ctx.next_layer()
         # print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
 
         # return local_out
@@ -248,14 +300,21 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         if ctx.needs_input_grad[1]:
             # scatter gradient to remote nodes
+            backward_begin = time.perf_counter()
             num_send_nodes = sum(graph.num_nodes_recv_from_others)
             num_recv_nodes = sum(graph.num_nodes_send_to_others)
 
             remote_nodes_grad_buf = graph.comm_buf.recv_buf
             local_nodes_grad_buf = graph.comm_buf.send_buf
 
-            remote_nodes_grad_buf.resize_(num_send_nodes, local_out_grad.size(-1))
-            local_nodes_grad_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
+            remote_nodes_grad_fp16_buf = graph.comm_buf.recv_buf_fp16
+            local_nodes_grad_fp16_buf = graph.comm_buf.send_buf_fp16
+
+            # remote_nodes_grad_buf.resize_(num_send_nodes, local_out_grad.size(-1))
+            # local_nodes_grad_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
+
+            graph.comm_buf.resize_buffer((num_recv_nodes, local_out_grad.size(-1)),
+                                        (num_send_nodes, local_out_grad.size(-1)))
             
             remote_nodes_grad_buf.zero_()
             if remote_nodes_grad_buf.size(0) != 0:
@@ -273,6 +332,10 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                 if num_bits == 32:
                     handle = Communicator.comm_with_fp32(local_nodes_grad_buf, remote_nodes_grad_buf,
                                                          graph.num_nodes_send_to_others, graph.num_nodes_recv_from_others)
+                elif num_bits == 16:
+                    handle = Communicator.comm_with_fp16(local_nodes_grad_buf, remote_nodes_grad_buf,
+                                                            local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf,
+                                                            graph.num_nodes_send_to_others, graph.num_nodes_recv_from_others)
                 else:
                     handle = \
                         Communicator.comm_with_quantization(local_nodes_grad_buf, remote_nodes_grad_buf,
@@ -291,7 +354,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                 handle.wait()
 
             # convert communication data to fp32
-            if num_bits != 32 and num_recv_nodes != 0:
+            if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0:
                 # local_nodes_grad_buf.copy_(local_nodes_grad_fp16_buf)
                 Communicator.convert_data_to_fp32(recv_quant_data_buf_list, local_nodes_grad_buf,
                                                   graph.num_nodes_send_to_others, recv_quant_param_buf_list,
@@ -305,11 +368,14 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                             source=local_nodes_grad_from)
 
             index_add_end = time.perf_counter()
+            backward_end = time.perf_counter()
             # rank = dist.get_rank()
             # if rank == 0:
             #     print('#########')
             #     print("Time of scatter gradient to local nodes(ms): {}".format((index_add_end - index_add_begin) * 1000.0))
             #     print('#########')
+            time_recorder.ctx.record_total_convolution_time(backward_end - backward_begin)
+            time_recorder.ctx.next_layer()
 
         return None, local_nodes_grad, None
 

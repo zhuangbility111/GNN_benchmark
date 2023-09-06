@@ -10,6 +10,8 @@ from data_manager import load_data
 
 from torch.profiler import profile, record_function, ProfilerActivity
 
+from TimeRecorder import TimeRecorder
+
 def train(model, data, optimizer, num_epochs):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -37,6 +39,8 @@ def train(model, data, optimizer, num_epochs):
         total_update_weight_dur += update_weight_end - update_weight_start
         if rank == 0:
             print("rank: {}, epoch: {}, loss: {}, time: {}".format(rank, epoch, loss.item(), (update_weight_end - forward_start)), flush=True)
+        TimeRecorder.ctx.next_epoch()
+
     end = time.perf_counter()
     total_training_dur = (end - start)
 
@@ -98,12 +102,35 @@ if __name__ == "__main__":
     print(config, flush=True)
 
     rank, world_size = init_dist_group()
-    config['input_dir'] += '{}_graph_{}_part/'.format(config['graph_name'], world_size)
+    config['input_dir'] += 'ogbn_{}_{}_part/'.format(config['graph_name'], world_size)
 
     set_random_seed(config['random_seed'])
     model, optimizer = create_model_and_optimizer(config)
     data = load_data(config)
 
-    print("finish data loading.", flush=True)
+    TimeRecorder(config['num_layers'], config['num_epochs'])
+
+    # print("finish data loading.", flush=True)
     train(model, data, optimizer, config['num_epochs'])
+
+    # use mpi_reduce to get the average time of all mpi processes
+    total_barrier_time = torch.tensor([TimeRecorder.ctx.get_total_barrier_time()])
+    total_quantization_time = torch.tensor([TimeRecorder.ctx.get_total_quantization_time()])
+    total_communication_time = torch.tensor([TimeRecorder.ctx.get_total_communication_time()])
+    total_dequantization_time = torch.tensor([TimeRecorder.ctx.get_total_dequantization_time()])
+    total_convolution_time = torch.tensor([TimeRecorder.ctx.get_total_convolution_time()])
+    dist.reduce(total_barrier_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_quantization_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_communication_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_dequantization_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_convolution_time, 0, op=dist.ReduceOp.SUM)
+
+    if rank == 0:
+        print("total_barrier_time(ms): {}".format(total_barrier_time[0] / float(world_size)))
+        print("total_quantization_time(ms): {}".format(total_quantization_time[0] / float(world_size)))
+        print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
+        print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
+        print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
+
     test(model, data)
+
