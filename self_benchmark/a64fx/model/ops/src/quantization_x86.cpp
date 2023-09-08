@@ -183,18 +183,22 @@ void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, in
 
 void quantize_tensor_v1(Tensor input, Tensor output,
                         Tensor quantized_nodes_feat_range, Tensor nodes_num_bits_tensor,
-                        Tensor quantized_params) {
+                        Tensor zero_points, Tensor scales) {
     int vertex_num = input.size(0);
     int feat_len = input.size(1);
 
     quantized_nodes_feat_range = quantized_nodes_feat_range.contiguous();
     nodes_num_bits_tensor = nodes_num_bits_tensor.contiguous();
-    quantized_params = quantized_params.contiguous();
+    // quantized_params = quantized_params.contiguous();
+    zero_points = zero_points.contiguous();
+    scales = scales.contiguous();
 
     float* input_ptr = input.data_ptr<float>();
     int64_t* quantized_nodes_feat_range_ptr = quantized_nodes_feat_range.data_ptr<int64_t>();
     int* nodes_num_bits_ptr = nodes_num_bits_tensor.data_ptr<int>(); // [num_bits]
-    float* quantized_params_ptr = quantized_params.data_ptr<float>(); // [scale, zero_point]
+    // float* quantized_params_ptr = quantized_params.data_ptr<float>(); // [scale, zero_point]
+    float* zero_points_ptr = zero_points.data_ptr<float>();
+    float* scales_ptr = scales.data_ptr<float>();
 
     uint8_t *output_ptr = output.data_ptr<uint8_t>();
 
@@ -223,8 +227,11 @@ void quantize_tensor_v1(Tensor input, Tensor output,
             float zero_point = min_val;
             float scale = (max_val - zero_point + 1e-20) / ((1 << num_bits) - 1);
 
-            quantized_params_ptr[i * 2] = scale;
-            quantized_params_ptr[i * 2 + 1] = zero_point;
+            // quantized_params_ptr[i * 2] = scale;
+            // quantized_params_ptr[i * 2 + 1] = zero_point;
+
+            zero_points_ptr[i] = zero_point;
+            scales_ptr[i] = scale;
 
             if (num_bits == 8) {
                 quantize_kernel_v1_for_8bits(input_ptr + i * feat_len, scale, zero_point, feat_len, 
@@ -254,25 +261,32 @@ void quantize_tensor_v1(Tensor input, Tensor output,
 
 void dequantize_tensor_v1(Tensor input, Tensor output, 
                           Tensor quantized_nodes_feat_range, Tensor nodes_num_bits_tensor,
-                          Tensor quantized_params) {
+                          Tensor zero_points, Tensor scales) {
     int vertex_num = output.size(0);
     int unpacked_feat_len = output.size(1);
     
     quantized_nodes_feat_range = quantized_nodes_feat_range.contiguous();
-    quantized_params = quantized_params.contiguous();
+    // quantized_params = quantized_params.contiguous();
+    zero_points = zero_points.contiguous();
+    scales = scales.contiguous();
 
     uint8_t* input_ptr = input.data_ptr<uint8_t>();
     int64_t* quantized_nodes_feat_range_ptr = quantized_nodes_feat_range.data_ptr<int64_t>();
     int* nodes_num_bits_ptr = nodes_num_bits_tensor.data_ptr<int>(); // [num_bits]
-    float* quantized_params_ptr = quantized_params.data_ptr<float>(); // [scale, zero_point]
+    // float* quantized_params_ptr = quantized_params.data_ptr<float>(); // [scale, zero_point]
+    float* zero_points_ptr = zero_points.data_ptr<float>();
+    float* scales_ptr = scales.data_ptr<float>();
+
 
     float *output_ptr = output.data_ptr<float>();
     
     #pragma omp parallel for
     for (int i = 0; i < vertex_num; i++) {
         int num_bits = nodes_num_bits_ptr[i];
-        float scale = quantized_params_ptr[i * 2];
-        float zero_point = quantized_params_ptr[i * 2 + 1];
+        // float scale = quantized_params_ptr[i * 2];
+        // float zero_point = quantized_params_ptr[i * 2 + 1];
+        float scale = scales_ptr[i];
+        float zero_point = zero_points_ptr[i];
     
         int packed_feat_begin = quantized_nodes_feat_range_ptr[i];
         int packed_feat_end = quantized_nodes_feat_range_ptr[i+1];
