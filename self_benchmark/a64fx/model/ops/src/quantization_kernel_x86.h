@@ -68,6 +68,7 @@ void dequantize_kernel_v1_for_8bits(uint8_t* input_ptr, const float scale, const
     }
 }
 
+// have bugs, need to fix
 void quantize_kernel_v1_for_4bits(float* input_ptr, const float scale, const float zero_point, const int feat_len,
                                   uint8_t* output_ptr) {
     __m512 zeros = _mm512_setzero_ps();
@@ -126,6 +127,7 @@ void quantize_kernel_v1_for_4bits(float* input_ptr, const float scale, const flo
     // }
 }
 
+// have bugs, need to fix
 void dequantize_kernel_v1_for_4bits(uint8_t* input_ptr, const float scale, const float zero_point, 
                                     const int packed_feat_len, const int unpacked_feat_len, float* output_ptr) {
 
@@ -169,8 +171,7 @@ void dequantize_kernel_v1_for_4bits(uint8_t* input_ptr, const float scale, const
     }
 }
 
-
-
+// have bugs, need to fix
 void quantize_kernel_v1_for_2bits(float* input_ptr, const float scale, const float zero_point, const int feat_len,
                                   uint8_t* output_ptr) {
     __m512 ones = _mm512_set1_ps(1.0);
