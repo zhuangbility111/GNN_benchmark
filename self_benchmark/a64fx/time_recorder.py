@@ -50,3 +50,7 @@ class TimeRecorder(object):
     def get_total_convolution_time(self) -> float:
         return torch.sum(self.total_covolution_time) * 1000.0
 
+    @staticmethod
+    def print_time(rank, message, time):
+        if rank == 0:
+            print("{}: {}".format(message, time))
