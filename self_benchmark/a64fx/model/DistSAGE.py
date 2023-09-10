@@ -2,15 +2,24 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import time
+
 # from torch_geometric.nn import DistSAGEConvGradWithPre
 # from torch_geometric.nn import DistSAGEConvGrad
-from .layers.sageconv_forpre import DistSAGEConvGradWithPre 
+from .layers.sageconv_forpre import DistSAGEConvGradWithPre
 from .layers.sageconv import DistSAGEConvGrad
 
+
 class DistSAGE(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, 
-                 num_layers=3, dropout=0.5,
-                 num_bits=32, is_pre_delay=False):
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        out_channels,
+        num_layers=3,
+        dropout=0.5,
+        num_bits=32,
+        is_pre_delay=False,
+    ):
         super().__init__()
 
         self.convs = torch.nn.ModuleList()

@@ -5,12 +5,12 @@ import argparse
 import time
 import yaml
 from model import create_model_and_optimizer, set_random_seed
-from communicator import init_dist_group
+from communicator import Communicator
 from data_manager import load_data
 
 from torch.profiler import profile, record_function, ProfilerActivity
 
-from TimeRecorder import TimeRecorder
+from time_recorder import TimeRecorder
 
 def train(model, data, optimizer, num_epochs):
     rank = dist.get_rank()
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     config['is_pre_delay'] = True if args.is_pre_delay == 'true' else False
     print(config, flush=True)
 
-    rank, world_size = init_dist_group()
+    rank, world_size = Communicator.init_dist_group()
     config['input_dir'] += 'ogbn_{}_{}_part/'.format(config['graph_name'], world_size)
 
     set_random_seed(config['random_seed'])
