@@ -253,7 +253,7 @@ void quantize_tensor_v1(Tensor input, Tensor output,
             if (num_bits == 8)
             {
                 quantize_kernel_v1_for_8bits(input_ptr + i * feat_len, scale, zero_point, feat_len,
-                                             output_ptr + i * feat_len);
+                                             output_ptr + quantized_nodes_feat_range_ptr[i]);
             }
             else if (num_bits == 4 || num_bits == 2)
             {

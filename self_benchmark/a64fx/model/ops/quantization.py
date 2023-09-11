@@ -10,6 +10,13 @@ num_nodes = 11177
 feat_len = 3
 
 
+def diff(out, ref, num_of_out, num_of_ref, atol=1e-06, rtol=1e-05):
+    torch.set_printoptions(precision=10)
+    idx_of_diff = torch.where(torch.abs(out - ref) > (atol + rtol * torch.abs(ref)))
+    print(f"{num_of_ref}[idx_of_diff] = {ref[idx_of_diff]}")
+    print(f"{num_of_out}[idx_of_diff] = {out[idx_of_diff]}")
+
+
 def run_torch_quantize_per_channel(data_fp32, scale, zero_point, bits):
     data_int8_ref = None
     if bits == 8:
@@ -40,12 +47,12 @@ def run_quantization_cpu_dequantize_tensor(data_int8, min_val, scale, bits):
     return data_fp32_dequant
 
 
-def run_quantization_cpu_quantize_tensor_v1(data_fp32, bits):
+def run_quantization_cpu_quantize_tensor_v1(data_fp32, nodes_num_bits_tensor):
     prepare_begin = time.perf_counter()
     # [num_bits, zero_point, scale]
+    num_nodes = data_fp32.size(0)
     quantized_params = torch.empty((num_nodes, 3), dtype=torch.float32)
-    nodes_num_bits_tensor = quantized_params[:, 0]
-    nodes_num_bits_tensor.fill_(float(bits))
+    quantized_params[:, 0] = nodes_num_bits_tensor
 
     # prefix sum of nodes_num_bits_tensor
     quantized_nodes_feat_range = torch.full((num_nodes + 1,), feat_len, dtype=torch.int64)
@@ -68,6 +75,7 @@ def run_quantization_cpu_quantize_tensor_v1(data_fp32, bits):
 
 
 def run_quantization_cpu_dequantize_tensor_v1(data_int8, quantized_nodes_feat_range, quantized_params):
+    num_nodes = quantized_nodes_feat_range.size(0) - 1
     data_fp32_dequant = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     quantization_cpu.dequantize_tensor_v1(
         data_int8, data_fp32_dequant, quantized_nodes_feat_range, quantized_params
@@ -184,9 +192,41 @@ def test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, w
     print("dequantization_time_ours on col (ms): ", np.mean(dequantization_time_ours_on_col[warmup:]))
 
 
+def test_quantize_tensor_on_random_bits(data_fp32):
+    num_nodes = data_fp32.size(0)
+    bits_idx = torch.tensor([8.0, 4.0, 2.0], dtype=torch.float32)
+    weights = torch.tensor([1.0, 1.0, 1.0])
+    node_dataformat_tensor = torch.multinomial(weights, num_nodes, replacement=True)
+    node_dataformat_tensor = bits_idx[node_dataformat_tensor]
+    print("node_dataformat_tensor = ", node_dataformat_tensor)
+    data_int8, quantized_nodes_feat_range, quantized_params = run_quantization_cpu_quantize_tensor_v1(
+        data_fp32, node_dataformat_tensor
+    )
+    data_fp32_dequant = run_quantization_cpu_dequantize_tensor_v1(
+        data_int8, quantized_nodes_feat_range, quantized_params
+    )
+    diff(data_fp32_dequant, data_fp32, "data_fp32_dequant", "data_fp32")
+
+
 if __name__ == "__main__":
-    # data_fp32 = torch.Tensor([[1.0, 2.0, 3.0, 4.0, 5.0], [0.0, 2.0, 1.0, 4.0, 5.0]])
-    data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32)
+    data_fp32 = torch.Tensor(
+        [
+            [1.0, 2.0, 3.0],
+            [0.0, 2.0, 1.0],
+            [1.0, 2.0, 3.0],
+            [2.0, 3.0, 4.0],
+            [3.0, 4.0, 5.0],
+            [4.0, 5.0, 6.0],
+            [5.0, 6.0, 7.0],
+            [6.0, 7.0, 8.0],
+            [7.0, 8.0, 9.0],
+            [8.0, 9.0, 10.0],
+            [9.0, 10.0, 11.0],
+            [10.0, 11.0, 12.0],
+            [11.0, 12.0, 13.0],
+        ]
+    )
+    # data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32)
     # data_fp32 = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     # for i in range(num_nodes):
     #     data_fp32[i] = torch.arange(feat_len, dtype=torch.float32)
@@ -196,7 +236,8 @@ if __name__ == "__main__":
     scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**bits - 1)
     zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
 
-    test_correctness_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits)
-    test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, 2, 10)
+    # test_correctness_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits)
+    # test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, 2, 10)
+    test_quantize_tensor_on_random_bits(data_fp32)
     # test_correctness_for_quantize_tensor_v1(data_fp32, zero_point, scale, bits)
     # test_perf_for_quantize_tensor_v1(data_fp32, zero_point, scale, bits, 2, 10)

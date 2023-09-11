@@ -85,8 +85,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                     graph.num_nodes_send_to_others,
                 )
             else:
-                nodes_num_bits_tensor = torch.empty((num_send_nodes), dtype=torch.float32)
-                Assigner.assign_node_dataformat_randomly(nodes_num_bits_tensor, num_bits)
+                nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
                 (
                     quantized_buf,
                     dequantized_nodes_feat_range,
@@ -191,8 +190,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                         graph.num_nodes_recv_from_others,
                     )
                 else:
-                    nodes_num_bits_tensor = torch.empty((num_send_nodes), dtype=torch.float32)
-                    Assigner.assign_node_dataformat_randomly(nodes_num_bits_tensor, num_bits)
+                    nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
+
                     (
                         quantized_buf,
                         dequantized_nodes_feat_range,

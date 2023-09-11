@@ -138,13 +138,6 @@ class Communicator(object):
         return handle
 
     @staticmethod
-    def unpack_recv_params_for_dequantization(recv_params):
-        dequantized_zero_points = recv_params[:, 0].contiguous()
-        dequantized_scales = recv_params[:, 1].contiguous()
-        dequantized_nodes_num_bits = recv_params[:, 2].contiguous().to(torch.int32)
-        return dequantized_zero_points, dequantized_scales, dequantized_nodes_num_bits
-
-    @staticmethod
     def get_splits_for_comm_quantized_data(
         recv_splits_tensor,
         send_splits_tensor,
@@ -196,7 +189,6 @@ class Communicator(object):
         send_params = torch.empty((num_send_nodes, (2 + 1)), dtype=torch.float32)
 
         # to get the random bits for each node
-        # nodes_num_bits_tensor = send_params[:, 0]
         send_params[:, 0] = nodes_num_bits_tensor
 
         # get the range of each node's quantized feature
@@ -213,23 +205,6 @@ class Communicator(object):
             send_buf, quantized_send_buf, quantized_nodes_feat_range, send_params
         )
         quantization_end = time.perf_counter()
-
-        # combine the quantized params and nodes_num_bits_tensor
-        # send_params = torch.cat(
-        #     (
-        #         zero_points.view(-1, 1),
-        #         scales.view(-1, 1),
-        #         nodes_num_bits_tensor.to(torch.float32).view(-1, 1),
-        #     ),
-        #     dim=1,
-        # )
-
-        # print("send_zero_points.shape: ", zero_points.shape, flush=True)
-        # print("send_zero_points: ", zero_points, flush=True)
-        # print("send_scales.shape: ", scales.shape, flush=True)
-        # print("send_scales: ", scales, flush=True)
-        # print("send_nodes_num_bits.shape: ", nodes_num_bits_tensor.shape, flush=True)
-        # print("send_nodes_num_bits: ", nodes_num_bits_tensor.to(torch.float32), flush=True)
 
         barrier_begin = time.perf_counter()
         dist.barrier()
@@ -249,25 +224,10 @@ class Communicator(object):
         )
         dequantized_params = recv_params
 
-        # unpack the recv params for dequantization
-        # (
-        #     dequantized_zero_points,
-        #     dequantized_scales,
-        #     dequantized_nodes_num_bits,
-        # ) = Communicator.unpack_recv_params_for_dequantization(recv_params)
-
         # get the range of each node's dequantized feature
         dequantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
             num_recv_nodes, send_buf.size(1), dequantized_params[:, 0]
         )
-
-        # print("dequantized_zero_points.shape: ", dequantized_zero_points.shape, flush=True)
-        # print("dequantized_zero_points: ", dequantized_zero_points, flush=True)
-        # print("dequantized_scales.shape: ", dequantized_scales.shape, flush=True)
-        # print("dequantized_scales: ", dequantized_scales, flush=True)
-        # print("dequantized_nodes_num_bits.shape: ", dequantized_nodes_num_bits.shape, flush=True)
-        # print("dequantized_nodes_num_bits: ", dequantized_nodes_num_bits, flush=True)
-        # print("dequantized_nodes_feat_range: ", dequantized_nodes_feat_range, flush=True)
 
         # get the splits for communication of quantized data
         quantized_recv_splits, quantized_send_splits = Communicator.get_splits_for_comm_quantized_data(
@@ -277,9 +237,6 @@ class Communicator(object):
             quantized_nodes_feat_range,
             world_size,
         )
-        # comm_for_param_end = time.perf_counter()
-        # print("quantized_recv_splits: ", quantized_recv_splits)
-        # print("quantized_send_splits: ", quantized_send_splits)
 
         quantized_recv_buf = torch.empty((dequantized_nodes_feat_range[-1]), dtype=torch.uint8)
 
@@ -292,6 +249,21 @@ class Communicator(object):
             async_op=False,
         )
         comm_for_data_end = time.perf_counter()
+
+        TimeRecorder.print_time(
+            dist.get_rank(),
+            "inner prepare params (ms): ",
+            (prepare_params_end - prepare_params_begin) * 1000.0,
+        )
+        TimeRecorder.print_time(
+            dist.get_rank(), "inner quantization (ms): ", (quantization_end - quantization_begin) * 1000.0
+        )
+        TimeRecorder.print_time(
+            dist.get_rank(), "inner barrier (ms): ", (barrier_end - barrier_begin) * 1000.0
+        )
+        TimeRecorder.print_time(
+            dist.get_rank(), "inner comm for data (ms): ", (comm_for_data_end - comm_for_data_begin) * 1000.0
+        )
 
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_quantization_time(
