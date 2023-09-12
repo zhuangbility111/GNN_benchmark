@@ -42,9 +42,10 @@ def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
 
 class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, graph, local_nodes_feat, num_bits):
+    def forward(ctx, graph, local_nodes_feat, layer, num_bits, is_training):
         ctx.graph = graph
         ctx.num_bits = num_bits
+        ctx.layer = layer
 
         prepare_comm_begin = time.perf_counter()
 
@@ -68,7 +69,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             # collect the local node feats to send to other subgraph
             torch.index_select(local_nodes_feat, 0, graph.idx_nodes_send_to_others, out=send_nodes_feat_buf)
 
-            if num_bits == 32:
+            if num_bits == 32 or is_training is False:
                 handle = Communicator.comm_with_fp32(
                     recv_nodes_feat_buf,
                     send_nodes_feat_buf,
@@ -85,7 +86,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                     graph.num_nodes_send_to_others,
                 )
             else:
-                nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
+                # nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
+                nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(f"forward{layer}")
                 (
                     quantized_buf,
                     dequantized_nodes_feat_range,
@@ -98,6 +100,10 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                     nodes_num_bits_tensor,
                     world_size,
                 )
+                # print("quantized_buf: ", quantized_buf)
+                # print("quantized_buf.max(): ", quantized_buf.max())
+                # print("quantized_buf.min(): ", quantized_buf.min())
+                # print("dequantized_nodes_feat_range: ", dequantized_nodes_feat_range)
                 handle = None
         else:
             handle = None
@@ -117,10 +123,24 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         convert_data_begin = time.perf_counter()
         # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
-        if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0:
+        if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0 and is_training:
             Communicator.convert_data_to_fp32_v1(
                 quantized_buf, recv_nodes_feat_buf, dequantized_nodes_feat_range, dequantized_params
             )
+
+            # print("dequantized_feat_buf: ", recv_nodes_feat_buf)
+            # print("dequantized_feat_buf.max(): ", recv_nodes_feat_buf.max())
+            # print("dequantized_feat_buf.min(): ", recv_nodes_feat_buf.min())
+
+            # zero_point = dequantized_params[:, 1].unsqueeze(-1)
+            # scale = dequantized_params[:, 2].unsqueeze(-1)
+
+            # print("zero_point: ", zero_point)
+            # print("zero_point.max(): ", zero_point.max())
+            # print("zero_point.min(): ", zero_point.min())
+            # print("scale: ", scale)
+            # print("scale.max(): ", scale.max())
+            # print("scale.min(): ", scale.min())
 
         convert_data_end = time.perf_counter()
         # print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
@@ -148,6 +168,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
     def backward(ctx, local_out_grad):
         graph = ctx.graph
         num_bits = ctx.num_bits
+        layer = ctx.layer
 
         if ctx.needs_input_grad[1]:
             # scatter gradient to remote nodes
@@ -190,8 +211,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                         graph.num_nodes_recv_from_others,
                     )
                 else:
-                    nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
-
+                    # nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
+                    nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(f"backward{layer}")
                     (
                         quantized_buf,
                         dequantized_nodes_feat_range,
@@ -205,6 +226,10 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                         world_size,
                     )
                     handle = None
+                    # print("backward quantized_buf: ", quantized_buf)
+                    # print("backward quantized_buf.max(): ", quantized_buf.max())
+                    # print("backward quantized_buf.min(): ", quantized_buf.min())
+                    # print("backward dequantized_nodes_feat_range: ", dequantized_nodes_feat_range)
             else:
                 handle = None
 
@@ -223,6 +248,20 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                     quantized_buf, local_nodes_grad_buf, dequantized_nodes_feat_range, dequantized_params
                 )
 
+                # print("backward dequantized_feat_buf: ", local_nodes_grad_buf)
+                # print("backward dequantized_feat_buf.max(): ", local_nodes_grad_buf.max())
+                # print("backward dequantized_feat_buf.min(): ", local_nodes_grad_buf.min())
+
+                # zero_point = dequantized_params[:, 1].unsqueeze(-1)
+                # scale = dequantized_params[:, 2].unsqueeze(-1)
+
+                # print("backward zero_point: ", zero_point)
+                # print("backward zero_point.max(): ", zero_point.max())
+                # print("backward zero_point.min(): ", zero_point.min())
+                # print("backward scale: ", scale)
+                # print("backward scale.max(): ", scale.max())
+                # print("backward scale.min(): ", scale.min())
+
             index_add_begin = time.perf_counter()
             # then accumulate the local node grads
             local_nodes_grad_from = local_nodes_grad_buf
@@ -236,11 +275,11 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             TimeRecorder.ctx.record_total_convolution_time(backward_end - backward_begin)
             TimeRecorder.ctx.next_layer()
 
-        return None, local_nodes_grad, None
+        return None, local_nodes_grad, None, None, None
 
 
-def aggregate_for_local_and_remote(graph, local_nodes_feat, num_bits):
-    return Aggregate_for_local_and_remote.apply(graph, local_nodes_feat, num_bits)
+def aggregate_for_local_and_remote(graph, local_nodes_feat, layer, num_bits, is_training):
+    return Aggregate_for_local_and_remote.apply(graph, local_nodes_feat, layer, num_bits, is_training)
 
 
 class DistSAGEConvGrad(MessagePassing):
@@ -252,7 +291,7 @@ class DistSAGEConvGrad(MessagePassing):
         add_self_loops: bool = False,
         normalize: bool = True,
         bias: bool = True,
-        **kwargs
+        **kwargs,
     ):
         kwargs.setdefault("aggr", "add")
         super().__init__(**kwargs)
@@ -277,11 +316,11 @@ class DistSAGEConvGrad(MessagePassing):
         self.lin.reset_parameters()
         zeros(self.bias)
 
-    def propagate(self, graph, local_nodes_feat, num_bits):
-        local_out = aggregate_for_local_and_remote(graph, local_nodes_feat, num_bits)
+    def propagate(self, graph, local_nodes_feat, layer, num_bits, is_training):
+        local_out = aggregate_for_local_and_remote(graph, local_nodes_feat, layer, num_bits, is_training)
         return local_out
 
-    def forward(self, graph, local_nodes_feat) -> Tensor:
+    def forward(self, graph, local_nodes_feat, layer) -> Tensor:
         """"""
         norm_begin = time.perf_counter()
 
@@ -293,7 +332,7 @@ class DistSAGEConvGrad(MessagePassing):
         local_nodes_feat = self.lin(local_nodes_feat)
 
         propagate_begin = time.perf_counter()
-        out = self.propagate(graph, local_nodes_feat, self.num_bits)
+        out = self.propagate(graph, local_nodes_feat, layer, self.num_bits, self.training)
 
         add_bias_begin = time.perf_counter()
         TimeRecorder.print_time(

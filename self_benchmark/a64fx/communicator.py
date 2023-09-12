@@ -115,7 +115,7 @@ class Communicator(object):
         rank = dist.get_rank()
         quantize_end = time.perf_counter()
         # print_time(rank, "outer quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
-        TimeRecorder.print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
+        # TimeRecorder.print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
 
         barrier_begin = time.perf_counter()
         dist.barrier()
@@ -214,14 +214,9 @@ class Communicator(object):
         # prepare the buffer for receiving the quantized params
         recv_params = torch.empty((num_recv_nodes, (2 + 1)), dtype=torch.float32)
 
-        send_params_splits = [x for x in send_splits]
-        recv_params_splits = [x for x in recv_splits]
-
         comm_for_data_begin = time.perf_counter()
         # communication for quantized params
-        dist.all_to_all_single(
-            recv_params, send_params, recv_params_splits, send_params_splits, async_op=False
-        )
+        dist.all_to_all_single(recv_params, send_params, recv_splits, send_splits, async_op=False)
         dequantized_params = recv_params
 
         # get the range of each node's dequantized feature
@@ -250,20 +245,20 @@ class Communicator(object):
         )
         comm_for_data_end = time.perf_counter()
 
-        TimeRecorder.print_time(
-            dist.get_rank(),
-            "inner prepare params (ms): ",
-            (prepare_params_end - prepare_params_begin) * 1000.0,
-        )
-        TimeRecorder.print_time(
-            dist.get_rank(), "inner quantization (ms): ", (quantization_end - quantization_begin) * 1000.0
-        )
-        TimeRecorder.print_time(
-            dist.get_rank(), "inner barrier (ms): ", (barrier_end - barrier_begin) * 1000.0
-        )
-        TimeRecorder.print_time(
-            dist.get_rank(), "inner comm for data (ms): ", (comm_for_data_end - comm_for_data_begin) * 1000.0
-        )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(),
+        #     "inner prepare params (ms): ",
+        #     (prepare_params_end - prepare_params_begin) * 1000.0,
+        # )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner quantization (ms): ", (quantization_end - quantization_begin) * 1000.0
+        # )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner barrier (ms): ", (barrier_end - barrier_begin) * 1000.0
+        # )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner comm for data (ms): ", (comm_for_data_end - comm_for_data_begin) * 1000.0
+        # )
 
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_quantization_time(
@@ -290,9 +285,9 @@ class Communicator(object):
                     recv_quant_data_buf_list[rank], recv_buf[begin_idx:end_idx], scale, zero_point, num_bits
                 )
         dequantize_end = time.perf_counter()
-        TimeRecorder.print_time(
-            dist.get_rank(), "inner dequantize data (ms): ", (dequantize_end - dequantize_begin) * 1000.0
-        )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner dequantize data (ms): ", (dequantize_end - dequantize_begin) * 1000.0
+        # )
         TimeRecorder.ctx.record_dequantization_time(dequantize_end - dequantize_begin)
 
     @staticmethod
