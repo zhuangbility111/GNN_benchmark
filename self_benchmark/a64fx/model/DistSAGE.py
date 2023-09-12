@@ -1,6 +1,7 @@
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch.nn import LayerNorm
 import time
 
 # from torch_geometric.nn import DistSAGEConvGradWithPre
@@ -23,10 +24,13 @@ class DistSAGE(torch.nn.Module):
         super().__init__()
 
         self.convs = torch.nn.ModuleList()
+        self.norms = torch.nn.ModuleList()
         if not is_pre_delay:
             self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels, num_bits))
+            self.norms.append(LayerNorm(hidden_channels))
             for _ in range(num_layers - 2):
                 self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, num_bits))
+                self.norms.append(LayerNorm(hidden_channels))
             self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, num_bits))
         # else:
         #     self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
@@ -46,18 +50,19 @@ class DistSAGE(torch.nn.Module):
         total_dropout_time = 0.0
         for i, conv in enumerate(self.convs[:-1]):
             conv_begin = time.perf_counter()
-            nodes_feats = conv(graph, nodes_feats)
-            relu_begin = time.perf_counter()
-            nodes_feats = F.relu(nodes_feats)
+            nodes_feats = conv(graph, nodes_feats, i)
             dropout_begin = time.perf_counter()
             nodes_feats = F.dropout(nodes_feats, p=self.dropout, training=self.training)
-            dropout_end = time.perf_counter()
+            nodes_feats = self.norms[i](nodes_feats)
+            relu_begin = time.perf_counter()
+            nodes_feats = F.relu(nodes_feats)
+            relu_end = time.perf_counter()
             # total_conv_time += relu_begin - conv_begin
-            total_conv_time = relu_begin - conv_begin
+            total_conv_time = dropout_begin - conv_begin
             # total_relu_time += dropout_begin - relu_begin
-            total_relu_time = dropout_begin - relu_begin
+            total_relu_time = relu_end - relu_begin
             # total_dropout_time += dropout_end - dropout_begin
-            total_dropout_time = dropout_end - dropout_begin
+            total_dropout_time = relu_begin - dropout_begin
             rank = dist.get_rank()
             if rank == 0:
                 print("----------------------------------------")
@@ -67,6 +72,6 @@ class DistSAGE(torch.nn.Module):
                 print("----------------------------------------")
 
         conv_begin = time.perf_counter()
-        nodes_feats = self.convs[-1](graph, nodes_feats)
+        nodes_feats = self.convs[-1](graph, nodes_feats, len(self.convs) - 1)
         # total_conv_time += time.perf_counter() - conv_begin
         return F.log_softmax(nodes_feats, dim=1)
