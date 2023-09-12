@@ -6,8 +6,8 @@ import numpy as np
 
 torch.set_num_threads(20)
 
-num_nodes = 11177
-feat_len = 3
+num_nodes = 31177
+feat_len = 256
 
 
 def diff(out, ref, num_of_out, num_of_ref, atol=1e-06, rtol=1e-05):
@@ -192,6 +192,31 @@ def test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, w
     print("dequantization_time_ours on col (ms): ", np.mean(dequantization_time_ours_on_col[warmup:]))
 
 
+def test_correctness_for_random_bits(data_fp32, data_fp32_dequant, node_dataformat_tensor, bits):
+    selected_data_fp32 = data_fp32[torch.nonzero(node_dataformat_tensor == bits).squeeze()]
+    selected_data_scale = (selected_data_fp32.max(dim=1)[0] - selected_data_fp32.min(dim=1)[0] + 10e-20) / (
+        2**bits - 1
+    )
+    selected_data_zero_point = selected_data_fp32.min(dim=1)[0] / selected_data_scale * (-1)
+    selected_data_intX_ref = run_torch_quantize_per_channel(
+        selected_data_fp32, selected_data_scale, selected_data_zero_point, bits
+    )
+    selected_data_fp32_dequant_ref = run_torch_dequantize(selected_data_intX_ref)
+
+    print("selected_data_fp32_dequant_ref.shape = ", selected_data_fp32_dequant_ref.shape)
+    print("selected_data_fp32_dequant_ref = ", selected_data_fp32_dequant_ref)
+
+    print("data_fp32_dequant.shape = ", data_fp32_dequant.shape)
+    print("data_fp32_dequant = ", data_fp32_dequant)
+
+    diff(
+        selected_data_fp32_dequant_ref,
+        data_fp32_dequant,
+        "selected_data_fp32_dequant_ref",
+        "data_fp32_dequant",
+    )
+
+
 def test_quantize_tensor_on_random_bits(data_fp32):
     num_nodes = data_fp32.size(0)
     bits_idx = torch.tensor([8.0, 4.0, 2.0], dtype=torch.float32)
@@ -205,36 +230,49 @@ def test_quantize_tensor_on_random_bits(data_fp32):
     data_fp32_dequant = run_quantization_cpu_dequantize_tensor_v1(
         data_int8, quantized_nodes_feat_range, quantized_params
     )
-    diff(data_fp32_dequant, data_fp32, "data_fp32_dequant", "data_fp32")
+
+    test_correctness_for_random_bits(
+        data_fp32,
+        data_fp32_dequant[torch.nonzero(node_dataformat_tensor.to(torch.int32) == 8).squeeze()],
+        node_dataformat_tensor,
+        8.0,
+    )
+
+    test_correctness_for_random_bits(
+        data_fp32,
+        data_fp32_dequant[torch.nonzero(node_dataformat_tensor.to(torch.int32) == 4).squeeze()],
+        node_dataformat_tensor,
+        4.0,
+    )
 
 
 if __name__ == "__main__":
-    data_fp32 = torch.Tensor(
-        [
-            [1.0, 2.0, 3.0],
-            [0.0, 2.0, 1.0],
-            [1.0, 2.0, 3.0],
-            [2.0, 3.0, 4.0],
-            [3.0, 4.0, 5.0],
-            [4.0, 5.0, 6.0],
-            [5.0, 6.0, 7.0],
-            [6.0, 7.0, 8.0],
-            [7.0, 8.0, 9.0],
-            [8.0, 9.0, 10.0],
-            [9.0, 10.0, 11.0],
-            [10.0, 11.0, 12.0],
-            [11.0, 12.0, 13.0],
-        ]
-    )
-    # data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32)
+    # data_fp32 = torch.Tensor(
+    #     [
+    #         [1.0, 2.0, 3.0],
+    #         [0.0, 2.0, 1.0],
+    #         [1.0, 2.0, 3.0],
+    #         [2.0, 3.0, 4.0],
+    #         [3.0, 4.0, 5.0],
+    #         [4.0, 5.0, 6.0],
+    #         [5.0, 6.0, 7.0],
+    #         [6.0, 7.0, 8.0],
+    #         [7.0, 8.0, 9.0],
+    #         [8.0, 9.0, 10.0],
+    #         [9.0, 10.0, 11.0],
+    #         [10.0, 11.0, 12.0],
+    #         [11.0, 12.0, 13.0],
+    #     ]
+    # )
+    data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32) / 100.0
     # data_fp32 = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     # for i in range(num_nodes):
     #     data_fp32[i] = torch.arange(feat_len, dtype=torch.float32)
     bits = 2
 
-    min_val = data_fp32.min(dim=1)[0]
-    scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**bits - 1)
-    zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
+    # min_val = data_fp32.min(dim=1)[0]
+    # scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**bits - 1)
+    # zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
 
     # test_correctness_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits)
     # test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, 2, 10)

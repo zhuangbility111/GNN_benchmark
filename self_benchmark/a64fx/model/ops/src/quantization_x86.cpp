@@ -242,7 +242,7 @@ void quantize_tensor_v1(Tensor input, Tensor output,
             // int num_bits = 8;
             int num_bits = static_cast<int>(quantized_params_ptr[i * 3]);
             float zero_point = min_val;
-            float scale = (max_val - zero_point + 1e-20) / ((1 << num_bits) - 1);
+            float scale = (max_val - zero_point + 1e-30) / ((1 << num_bits) - 1);
 
             quantized_params_ptr[i * 3 + 1] = zero_point;
             quantized_params_ptr[i * 3 + 2] = scale;
@@ -258,7 +258,7 @@ void quantize_tensor_v1(Tensor input, Tensor output,
             else if (num_bits == 4 || num_bits == 2)
             {
                 // quantize_kernel_v1_for_4bits(input_ptr + i * feat_len, scale, zero_point, feat_len,
-                //                             output_ptr + quantized_nodes_feat_range_ptr[i]);
+                //                              output_ptr + quantized_nodes_feat_range_ptr[i]);
                 const int elems_per_byte = 8 / num_bits;
                 for (int j = 0; j < feat_len; j += elems_per_byte)
                 {
