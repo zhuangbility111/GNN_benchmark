@@ -43,6 +43,8 @@ class DistSAGE(torch.nn.Module):
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
+        for norm in self.norms:
+            norm.reset_parameters()
 
     def forward(self, graph, nodes_feats):
         total_conv_time = 0.0
