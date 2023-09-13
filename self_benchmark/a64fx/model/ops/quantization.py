@@ -6,15 +6,18 @@ import numpy as np
 
 torch.set_num_threads(20)
 
-num_nodes = 31177
-feat_len = 256
+num_nodes = 35413
+feat_len = 258
 
 
 def diff(out, ref, num_of_out, num_of_ref, atol=1e-06, rtol=1e-05):
     torch.set_printoptions(precision=10)
     idx_of_diff = torch.where(torch.abs(out - ref) > (atol + rtol * torch.abs(ref)))
+    print(f"idx_of_diff = {idx_of_diff}")
     print(f"{num_of_ref}[idx_of_diff] = {ref[idx_of_diff]}")
     print(f"{num_of_out}[idx_of_diff] = {out[idx_of_diff]}")
+
+    return idx_of_diff
 
 
 def run_torch_quantize_per_channel(data_fp32, scale, zero_point, bits):
@@ -78,6 +81,45 @@ def run_quantization_cpu_dequantize_tensor_v1(data_int8, quantized_nodes_feat_ra
     num_nodes = quantized_nodes_feat_range.size(0) - 1
     data_fp32_dequant = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     quantization_cpu.dequantize_tensor_v1(
+        data_int8, data_fp32_dequant, quantized_nodes_feat_range, quantized_params
+    )
+    return data_fp32_dequant
+
+
+# a version aligned with torch version based on v1
+def run_quantization_cpu_quantize_tensor_v2(data_fp32, nodes_num_bits_tensor, zero_point, scale):
+    # [num_bits, zero_point, scale]
+    num_nodes = data_fp32.size(0)
+    quantized_params = torch.empty((num_nodes, 3), dtype=torch.float32)
+    quantized_params[:, 0].fill_(nodes_num_bits_tensor)
+
+    # quantized_params[:, 1] = zero_point
+    # quantized_params[:, 2] = scale
+
+    # prefix sum of nodes_num_bits_tensor
+    quantized_nodes_feat_range = torch.full((num_nodes + 1,), feat_len, dtype=torch.int64)
+    quantized_nodes_feat_range[0] = 0
+    quantized_nodes_feat_range[1:] = torch.ceil(quantized_nodes_feat_range[1:] * nodes_num_bits_tensor / 8.0)
+    quantized_nodes_feat_range = torch.cumsum(quantized_nodes_feat_range, 0)
+    # for i in range(0, num_nodes):
+    #     quantized_nodes_feat_range[i+1] = quantized_nodes_feat_range[i] + \
+    #                 torch.ceil((nodes_num_bits_tensor[i]) * feat_len / 8.0)
+    data_int8 = torch.empty(quantized_nodes_feat_range[-1], dtype=torch.uint8)
+    # zero_points = torch.empty((num_nodes), dtype=torch.float32)
+    # scales = torch.empty((num_nodes), dtype=torch.float32)
+    prepare_end = time.perf_counter()
+    inner_quantization_begin = time.perf_counter()
+    quantization_cpu.quantize_tensor_v2_torch(
+        data_fp32, data_int8, quantized_nodes_feat_range, zero_point, scale, bits
+    )
+    return data_int8, quantized_nodes_feat_range
+
+
+# a version aligned with torch version based on v1
+def run_quantization_cpu_dequantize_tensor_v2(data_int8, quantized_nodes_feat_range, quantized_params):
+    num_nodes = quantized_nodes_feat_range.size(0) - 1
+    data_fp32_dequant = torch.empty((num_nodes, feat_len), dtype=torch.float32)
+    quantization_cpu.dequantize_tensor_v2_torch(
         data_int8, data_fp32_dequant, quantized_nodes_feat_range, quantized_params
     )
     return data_fp32_dequant
@@ -264,11 +306,11 @@ if __name__ == "__main__":
     #         [11.0, 12.0, 13.0],
     #     ]
     # )
-    data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32) / 100.0
+    data_fp32 = torch.randn((num_nodes, feat_len), dtype=torch.float32)
     # data_fp32 = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     # for i in range(num_nodes):
     #     data_fp32[i] = torch.arange(feat_len, dtype=torch.float32)
-    bits = 2
+    bits = 8
 
     # min_val = data_fp32.min(dim=1)[0]
     # scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0] + 10e-20) / (2**bits - 1)
@@ -276,6 +318,46 @@ if __name__ == "__main__":
 
     # test_correctness_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits)
     # test_perf_for_quantize_tensor(data_fp32, min_val, zero_point, scale, bits, 2, 10)
-    test_quantize_tensor_on_random_bits(data_fp32)
+    # test_quantize_tensor_on_random_bits(data_fp32)
+    scale = (data_fp32.max(dim=1)[0] - data_fp32.min(dim=1)[0]) / (2**bits - 1)
+    zero_point = data_fp32.min(dim=1)[0] / scale * (-1)
+    data_int8_ref = run_torch_quantize_per_channel(data_fp32, scale, zero_point, bits)
+
+    (
+        data_int8_our_torch,
+        quantized_nodes_feat_range,
+    ) = run_quantization_cpu_quantize_tensor_v2(data_fp32, bits, zero_point, scale)
+
+    data_int8_ours, quantized_nodes_feat_range, quantized_params = run_quantization_cpu_quantize_tensor_v1(
+        data_fp32, bits
+    )
+
+    idx_of_diff = diff(
+        data_int8_ref.int_repr().view(num_nodes, -1),
+        data_int8_our_torch.view(num_nodes, -1),
+        "data_int8_ref",
+        "data_int8_our_torch",
+    )
+
+    print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
+    # print(f"scales[idx_of_diff[0]] = {scale[idx_of_diff[0]]}")
+    # print(f"zero_points[idx_of_diff[0]] = {zero_point[idx_of_diff[0]]}")
+
+    if idx_of_diff[0].size(0) != 0:
+        print(
+            f"value computed on python = {data_fp32[idx_of_diff] / scale[idx_of_diff[0]] + zero_point[idx_of_diff[0]]}"
+        )
+
+    idx_of_diff = diff(
+        data_int8_our_torch.view(num_nodes, -1),
+        data_int8_ours.view(num_nodes, -1),
+        "data_int8_our_torch",
+        "data_int8_ours",
+    )
+
+    print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
+    # print(f"scales[idx_of_diff[0]] = {scale[idx_of_diff[0]]}")
+    # print(f"zero_points[idx_of_diff[0]] = {zero_point[idx_of_diff[0]]}")
+
     # test_correctness_for_quantize_tensor_v1(data_fp32, zero_point, scale, bits)
     # test_perf_for_quantize_tensor_v1(data_fp32, zero_point, scale, bits, 2, 10)
