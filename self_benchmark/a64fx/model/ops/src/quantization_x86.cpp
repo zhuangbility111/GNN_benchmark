@@ -4,6 +4,8 @@
 #include <cmath>
 #include "quantization_kernel_x86.h"
 
+#include <random>
+
 using torch::Tensor;
 
 // #ifdef __AVX512F__
@@ -216,6 +218,9 @@ void quantize_tensor_v1(Tensor input, Tensor output,
 
     uint8_t *output_ptr = output.data_ptr<uint8_t>();
 
+    // std::mt19937 rng{std::random_device{}()};
+    // std::uniform_real_distribution<float> dist{0.0, 1.0};
+
 #pragma omp parallel for
     for (int i = 0; i < vertex_num; i++)
     {
@@ -261,6 +266,9 @@ void quantize_tensor_v1(Tensor input, Tensor output,
                 {
                     const int32_t val =
                         lrintf((input_ptr[i * feat_len + j + k] - zero_point) / scale);
+                    // float noise = dist(rng);
+                    // const int32_t val =
+                    //     static_cast<int>((input_ptr[i * feat_len + j + k] - zero_point) / scale + noise);
                     packed_val |= (val << ((elems_per_byte - k - 1) * num_bits));
                 }
                 output_ptr[quantized_nodes_feat_range_ptr[i] + j / elems_per_byte] = packed_val;
