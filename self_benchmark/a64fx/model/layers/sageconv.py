@@ -303,7 +303,8 @@ class DistSAGEConvGrad(MessagePassing):
         self.local_deg = None
         self.num_bits = num_bits
 
-        self.lin = Linear(in_channels, out_channels, bias=False)
+        self.lin_neigh = Linear(in_channels, out_channels, bias=False)
+        self.lin_self = Linear(in_channels, out_channels, bias=False)
 
         if bias:
             self.bias = Parameter(torch.zeros(out_channels))
@@ -314,7 +315,10 @@ class DistSAGEConvGrad(MessagePassing):
 
     def reset_parameters(self):
         gain = torch.nn.init.calculate_gain("relu")
-        torch.nn.init.xavier_uniform_(self.lin.weight, gain=gain)
+        torch.nn.init.xavier_uniform_(self.lin_neigh.weight, gain=gain)
+        torch.nn.init.xavier_uniform_(self.lin_self.weight, gain=gain)
+        # if self.bias is not None:
+        #     torch.nn.init.zeros_(self.bias)
         # self.lin.reset_parameters()
         # zeros(self.bias)
 
@@ -341,17 +345,19 @@ class DistSAGEConvGrad(MessagePassing):
             dist.get_rank(), "outer propagate forward (ms): ", (add_bias_begin - propagate_begin) * 1000.0
         )
         # print("outer propagate forward (ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
-        out += local_nodes_feat
+        # out += local_nodes_feat
 
         if self.normalize:
             local_deg = self.local_deg
             if local_deg is None:
-                local_deg = get_deg(graph.local_adj_t, graph.remote_adj_t, self.add_self_loops)
+                local_deg = get_deg(graph.local_adj_t, graph.remote_adj_t, self.add_self_loops).clamp(min=1)
                 self.local_deg = local_deg
-            out /= local_deg + 1
+            # out /= local_deg + 1
+            out /= local_deg
 
         # if not linear_first:
-        out = self.lin(out)
+        out = self.lin_neigh(out)
+        out += self.lin_self(local_nodes_feat)
 
         if self.bias is not None:
             out += self.bias
