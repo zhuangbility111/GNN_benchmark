@@ -7,6 +7,13 @@ from time_recorder import TimeRecorder
 from quantizer import Quantizer, Quantizer_v1
 
 
+def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
+    torch.set_printoptions(precision=10)
+    idx_of_diff = torch.where(torch.abs(out - ref) > (atol + rtol * torch.abs(ref)))
+    print(f"{num_of_ref}[idx_of_diff] = {ref[idx_of_diff]}")
+    print(f"{num_of_out}[idx_of_diff] = {out[idx_of_diff]}")
+
+
 class Communicator(object):
     def __init__(self) -> None:
         pass
@@ -185,7 +192,7 @@ class Communicator(object):
         num_recv_nodes = recv_splits_tensor.sum().item()
 
         # create quantized params buffer for communication
-        # [zero_points, scales, nodes_num_bits]
+        # [nodes_num_bits, zero_points, scales]
         send_params = torch.empty((num_send_nodes, (2 + 1)), dtype=torch.float32)
 
         # to get the random bits for each node
@@ -204,6 +211,16 @@ class Communicator(object):
         Quantizer_v1.quantize_fp32_to_intX(
             send_buf, quantized_send_buf, quantized_nodes_feat_range, send_params
         )
+
+        # scale = (send_buf.max(dim=1)[0] - send_buf.min(dim=1)[0] + 1e-30) / (2**8 - 1)
+        # zero_point = send_buf.min(dim=1)[0] / scale * (-1)
+        # quantized_send_buf_ref = torch.quantize_per_channel(
+        #     send_buf, scale, zero_point, axis=0, dtype=torch.quint8
+        # )
+        # quantized_send_buf = quantized_send_buf_ref.int_repr().reshape(-1)
+        # send_params[:, 1] = zero_point
+        # send_params[:, 2] = scale
+
         quantization_end = time.perf_counter()
 
         barrier_begin = time.perf_counter()
@@ -296,5 +313,10 @@ class Communicator(object):
         Quantizer_v1.dequantize_intX_to_fp32(
             quantized_recv_buf, recv_buf, quantized_nodes_feat_range, dequantized_params
         )
+        # zero_point = dequantized_params[:, 1]
+        # scale = dequantized_params[:, 2]
+        # recv_buf.copy_(
+        #     (quantized_recv_buf.view(zero_point.size(0), -1) - zero_point.view(-1, 1)) * scale.view(-1, 1)
+        # )
         dequantization_end = time.perf_counter()
         TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)

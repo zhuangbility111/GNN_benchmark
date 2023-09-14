@@ -116,11 +116,11 @@ def run_quantization_cpu_quantize_tensor_v2(data_fp32, nodes_num_bits_tensor, ze
 
 
 # a version aligned with torch version based on v1
-def run_quantization_cpu_dequantize_tensor_v2(data_int8, quantized_nodes_feat_range, quantized_params):
+def run_quantization_cpu_dequantize_tensor_v2(data_int8, quantized_nodes_feat_range, zero_point, scale, bits):
     num_nodes = quantized_nodes_feat_range.size(0) - 1
     data_fp32_dequant = torch.empty((num_nodes, feat_len), dtype=torch.float32)
     quantization_cpu.dequantize_tensor_v2_torch(
-        data_int8, data_fp32_dequant, quantized_nodes_feat_range, quantized_params
+        data_int8, data_fp32_dequant, quantized_nodes_feat_range, zero_point, scale, bits
     )
     return data_fp32_dequant
 
@@ -332,30 +332,46 @@ if __name__ == "__main__":
         data_fp32, bits
     )
 
-    idx_of_diff = diff(
-        data_int8_ref.int_repr().view(num_nodes, -1),
-        data_int8_our_torch.view(num_nodes, -1),
-        "data_int8_ref",
-        "data_int8_our_torch",
-    )
+    # idx_of_diff = diff(
+    #     data_int8_ref.int_repr().view(num_nodes, -1),
+    #     data_int8_our_torch.view(num_nodes, -1),
+    #     "data_int8_ref",
+    #     "data_int8_our_torch",
+    # )
 
-    print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
+    # print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
     # print(f"scales[idx_of_diff[0]] = {scale[idx_of_diff[0]]}")
     # print(f"zero_points[idx_of_diff[0]] = {zero_point[idx_of_diff[0]]}")
 
-    if idx_of_diff[0].size(0) != 0:
-        print(
-            f"value computed on python = {data_fp32[idx_of_diff] / scale[idx_of_diff[0]] + zero_point[idx_of_diff[0]]}"
-        )
+    # if idx_of_diff[0].size(0) != 0:
+    #     print(
+    #         f"value computed on python = {data_fp32[idx_of_diff] / scale[idx_of_diff[0]] + zero_point[idx_of_diff[0]]}"
+    #     )
 
-    idx_of_diff = diff(
-        data_int8_our_torch.view(num_nodes, -1),
-        data_int8_ours.view(num_nodes, -1),
-        "data_int8_our_torch",
-        "data_int8_ours",
+    # idx_of_diff = diff(
+    #     data_int8_our_torch.view(num_nodes, -1),
+    #     data_int8_ours.view(num_nodes, -1),
+    #     "data_int8_our_torch",
+    #     "data_int8_ours",
+    # )
+
+    # print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
+
+    data_fp32_ours = run_quantization_cpu_dequantize_tensor_v1(
+        data_int8_ours, quantized_nodes_feat_range, quantized_params
     )
 
-    print(f"data_fp32[idx_of_diff] = {data_fp32[idx_of_diff]}")
+    data_fp32_our_torch = run_quantization_cpu_dequantize_tensor_v2(
+        data_int8_our_torch, quantized_nodes_feat_range, zero_point, scale, bits
+    )
+
+    idx_of_diff = diff(
+        data_fp32_ours.view(num_nodes, -1),
+        data_fp32_our_torch.view(num_nodes, -1),
+        "data_fp32_ours",
+        "data_fp32_our_torch",
+    )
+
     # print(f"scales[idx_of_diff[0]] = {scale[idx_of_diff[0]]}")
     # print(f"zero_points[idx_of_diff[0]] = {zero_point[idx_of_diff[0]]}")
 
