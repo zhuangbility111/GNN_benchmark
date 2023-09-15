@@ -22,9 +22,8 @@ class Assigner(object):
     def assign_node_dataformat_randomly(self, weight, num_bits=8):
         for layer in self.node_dataformat_dict.keys():
             num_nodes = self.node_dataformat_dict[layer].size(0)
-            if num_bits == -1:
-                node_dataformat_tensor = torch.multinomial(weight, num_nodes, replacement=True)
-                self.node_dataformat_dict[layer].copy_(bits_idx[node_dataformat_tensor])
+            node_dataformat_tensor = torch.multinomial(weight, num_nodes, replacement=True)
+            self.node_dataformat_dict[layer].copy_(bits_idx[node_dataformat_tensor])
 
     def get_node_dataformat(self, layer):
         return self.node_dataformat_dict[f"{layer}"]

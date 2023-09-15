@@ -1,4 +1,4 @@
-input_dir : "../dataset/ogbn_products_new/no_balanced_training_samples/"
+input_dir : "../dataset/ogbn_products_new/balanced_training_samples/"
 graph_name : "products"
 model_name : "sage"
 in_channels : 100
@@ -8,5 +8,5 @@ num_layers : 3
 dropout : 0.5
 lr : 0.01
 weight_decay : 0.0
-num_epochs : 10
+num_epochs : 250
 random_seed : 0

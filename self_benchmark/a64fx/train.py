@@ -24,7 +24,17 @@ def train(model, data, optimizer, num_epochs, num_bits):
     total_update_weight_dur = 0
 
     node_dataformat_assign_period = 200
-    assign_weight = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+
+    if num_bits == 8:
+        assign_weight = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+    elif num_bits == 4:
+        assign_weight = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
+    elif num_bits == 2:
+        assign_weight = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
+    elif num_bits == -1:
+        assign_weight = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32)
+    else:
+        assign_weight = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
 
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
     model.train()
