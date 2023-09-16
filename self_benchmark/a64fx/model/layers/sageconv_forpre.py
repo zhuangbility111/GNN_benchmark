@@ -46,7 +46,8 @@ class DistributedAggregation(torch.autograd.Function):
         barrier_begin = time.perf_counter()
         rank = dist.get_rank()
         if rank == 0:
-            print("pre aggr time = ", barrier_begin - resize_buffer_begin)
+            print("pre aggr time (ms): {}".format((barrier_begin - pre_aggr_to_begin) * 1000.0))
+            
         # dist.barrier()
 
         comm_pre_aggr_to_begin = time.perf_counter()
@@ -69,7 +70,7 @@ class DistributedAggregation(torch.autograd.Function):
             handle.wait()
 
         if rank == 0:
-            print("communication time = ", async_wait_begin - comm_pre_aggr_to_begin)
+            print("communication time (ms): {}".format((async_wait_begin - comm_pre_aggr_to_begin) * 1000.0))
 
         if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
             # recover fp16 to fp32
@@ -81,7 +82,7 @@ class DistributedAggregation(torch.autograd.Function):
         post_aggr_from_end = time.perf_counter()
 
         if rank == 0:
-            print("post aggr time = ", post_aggr_from_end - post_aggr_from_begin)
+            print("post aggr time (ms): {}".format((post_aggr_from_end - post_aggr_from_begin) * 1000.0))
  
         # rank = dist.get_rank()
         # if rank == 0:

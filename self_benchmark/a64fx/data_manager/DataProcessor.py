@@ -298,6 +298,8 @@ class DataProcessorForPre(object):
         # remap (localize) the sorted src nodes id (remote nodes id) for construction of SparseTensor
         num_remote_nodes_from = DataProcessorForPre.remap_remote_nodes_id(remote_edges_list_pre_post_aggr_from[0], \
                                                                             begin_edge_on_each_partition_from)
+        # print("after transform, remote_edges_list_pre_post_aggr_from[0] = {}".format(remote_edges_list_pre_post_aggr_from[0]), flush=True)
+        # print("after transform, remote_edges_list_pre_post_aggr_from[1] = {}".format(remote_edges_list_pre_post_aggr_from[1]), flush=True)
 
         adj_t_pre_post_aggr_from = SparseTensor(row=remote_edges_list_pre_post_aggr_from[1], \
                                                 col=remote_edges_list_pre_post_aggr_from[0], \
@@ -316,6 +318,8 @@ class DataProcessorForPre(object):
         num_remote_nodes_to = DataProcessorForPre.remap_remote_nodes_id(remote_edges_list_pre_post_aggr_to[1], \
                                                                         begin_edge_on_each_partition_to)
 
+        # print("after transform, remote_edges_list_pre_post_aggr_to[0] = {}".format(remote_edges_list_pre_post_aggr_to[0]), flush=True)
+        # print("after transform, remote_edges_list_pre_post_aggr_to[1] = {}".format(remote_edges_list_pre_post_aggr_to[1]), flush=True)
         adj_t_pre_post_aggr_to = SparseTensor(row=remote_edges_list_pre_post_aggr_to[1], \
                                             col=remote_edges_list_pre_post_aggr_to[0], \
                                             value=torch.ones(remote_edges_list_pre_post_aggr_to[1].shape[0], dtype=torch.float32), \
@@ -326,3 +330,202 @@ class DataProcessorForPre(object):
         # ----------------------------------------------------------
 
         return local_adj_t, adj_t_pre_post_aggr_from, adj_t_pre_post_aggr_to
+
+class DataProcessorForPreAggresive(object):
+    def __init__(self) -> None:
+        pass
+
+    @staticmethod
+    def get_degrees(nodes_list):
+        # count the number of unique nodes
+        unique_nodes_list, counts = torch.unique(nodes_list, return_counts=True)
+        # save the degree of each src node
+        degrees = {unique_nodes_list[i].item(): counts[i].item() for i in range(len(unique_nodes_list))}
+        return degrees
+    
+    @staticmethod
+    def process_remote_edges_pre_post_aggr_to(remote_edges_pre_post_aggr_to, world_size):
+        remote_edges_list_pre_post_aggr_to = [torch.empty((0), dtype=torch.int64), torch.empty((0), dtype=torch.int64)]
+        begin_edge_on_each_partition_to = torch.zeros(world_size+1, dtype=torch.int64)
+        pre_post_aggr_to_splits = []
+        for i in range(world_size):
+            # the remote edges sent from other MPI ranks is divided into two parts
+            # src nodes and dst nodes
+            num_remote_edges = int(remote_edges_pre_post_aggr_to[i].shape[0] / 2)
+            src_in_remote_edges = remote_edges_pre_post_aggr_to[i][:num_remote_edges]
+            dst_in_remote_edges = remote_edges_pre_post_aggr_to[i][num_remote_edges:]
+
+            pre_post_aggr_to_splits.append(torch.unique(dst_in_remote_edges).shape[0])
+
+            # append the remote edges to the list for all_to_all communication
+            remote_edges_list_pre_post_aggr_to[0] = torch.cat((remote_edges_list_pre_post_aggr_to[0], \
+                                                                src_in_remote_edges), \
+                                                                dim=0)
+            remote_edges_list_pre_post_aggr_to[1] = torch.cat((remote_edges_list_pre_post_aggr_to[1], \
+                                                                dst_in_remote_edges), \
+                                                                dim=0)
+            
+            begin_edge_on_each_partition_to[i+1] = begin_edge_on_each_partition_to[i] + dst_in_remote_edges.shape[0]
+        begin_edge_on_each_partition_to[world_size] = remote_edges_list_pre_post_aggr_to[0].shape[0]
+            
+        return remote_edges_list_pre_post_aggr_to, begin_edge_on_each_partition_to, pre_post_aggr_to_splits
+
+    
+    @staticmethod
+    def divide_remote_edges_list(begin_node_on_each_subgraph, remote_edges_list, world_size):
+        # collect remote edges which are requested from other MPI ranks
+        remote_edges_pre_post_aggr_from = []
+        pre_post_aggr_from_splits = []
+        begin_edge_on_each_partition_from = torch.zeros(world_size+1, dtype=torch.int64)
+        # collect remote edges which are used to compute aggregation with SPMM
+        remote_edges_list_pre_post_aggr_from = [torch.empty((0), dtype=torch.int64), torch.empty((0), dtype=torch.int64)]
+        for i in range(world_size):
+            # set the begin node idx and end node idx on current rank i
+            begin_idx = begin_node_on_each_subgraph[i]
+            end_idx = begin_node_on_each_subgraph[i+1]
+            
+            src_in_remote_edges = remote_edges_list[0]
+            dst_in_remote_edges = remote_edges_list[1]
+
+            # get the remote edges which are from current rank i
+            edge_idx = ((src_in_remote_edges >= begin_idx) & (src_in_remote_edges < end_idx))
+            src_in_remote_edges = src_in_remote_edges[edge_idx]
+            dst_in_remote_edges = dst_in_remote_edges[edge_idx]
+
+            # get out degrees of src nodes
+            out_degrees = DataProcessorForPreAggresive.get_degrees(src_in_remote_edges)
+
+            # get in degrees of dst nodes
+            in_degrees = DataProcessorForPreAggresive.get_degrees(dst_in_remote_edges)
+
+            pre_or_post_aggr_flags = torch.zeros(src_in_remote_edges.shape[0], dtype=torch.int64)
+            is_pre = 1
+            is_post = 0
+
+            # traverse the remote edges to decide pre_aggr or post_aggr
+            for e_idx in range(src_in_remote_edges.shape[0]):
+                src_node = src_in_remote_edges[e_idx].item()
+                dst_node = dst_in_remote_edges[e_idx].item()
+                # if the out degree of src node > in degree of dst node, then post_aggr
+                if out_degrees[src_node] > in_degrees[dst_node]:
+                    pre_or_post_aggr_flags[e_idx] = is_post
+                # else, pre_aggr
+                else:
+                    pre_or_post_aggr_flags[e_idx] = is_pre
+
+            # collect the remote edges which are pre_aggr
+            pre_aggr_edge_idx = (pre_or_post_aggr_flags == is_pre)
+            src_in_remote_edges_pre_aggr = src_in_remote_edges[pre_aggr_edge_idx]
+            dst_in_remote_edges_pre_aggr = dst_in_remote_edges[pre_aggr_edge_idx]
+
+            # collect the remote nodes which are post_aggr
+            post_aggr_edge_idx = (pre_or_post_aggr_flags == is_post)
+            src_in_remote_edges_post_aggr = torch.unique(src_in_remote_edges[post_aggr_edge_idx], sorted=True)
+
+            # combine the remote edges which are pre_aggr and post_aggr 
+            # to send them to other MPI ranks
+            src_to_send = torch.cat((src_in_remote_edges_pre_aggr, \
+                                    src_in_remote_edges_post_aggr), \
+                                    dim=0)
+            dst_to_send = torch.cat((dst_in_remote_edges_pre_aggr, \
+                                    src_in_remote_edges_post_aggr), \
+                                    dim=0)
+            
+            # sort the remote edges based on the dst nodes (remote nodes on post_aggr and local nodes on pre_aggr)
+            sort_index = torch.argsort(dst_to_send)
+            src_to_send = src_to_send[sort_index]
+            dst_to_send = dst_to_send[sort_index]
+
+            # append the remote edges to the list for all_to_all communication
+            # the remote edges is used to request the remote nodes (post_aggr) 
+            # or the local nodes (pre_aggr) from other MPI ranks
+            remote_edges_pre_post_aggr_from.append(torch.cat((src_to_send, dst_to_send), dim=0))
+
+            # ----------------------------------------------------------------
+
+            # then construct the remote edges list for aggregation with SPMM later
+            # sort the remote edges based on the src nodes (remote nodes on pre_aggr and local nodes on post_aggr)
+
+            # collect the remote edges which are post_aggr
+            src_in_remote_edges_post_aggr = src_in_remote_edges[post_aggr_edge_idx]
+            dst_in_remote_edges_post_aggr = dst_in_remote_edges[post_aggr_edge_idx]
+
+            # collect the remote nodes which are sent from other MPI ranks (the result of remote pre_aggr)
+            dst_from_recv = torch.unique(dst_in_remote_edges_pre_aggr, sorted=True)
+
+            # combine the src of remote edges which are pre_aggr and post_aggr
+            src_from_recv = torch.cat((src_in_remote_edges_post_aggr, \
+                                       dst_from_recv), \
+                                       dim=0)
+
+            # combine the dst of remote edges which are pre_aggr and post_aggr
+            dst_from_recv = torch.cat((dst_in_remote_edges_post_aggr, \
+                                       dst_from_recv), \
+                                       dim=0)
+            
+            # sort the remote edges based on the src nodes (remote nodes on post_aggr and local nodes on pre_aggr)
+            sort_index = torch.argsort(src_from_recv)
+            src_from_recv = src_from_recv[sort_index]
+            dst_from_recv = dst_from_recv[sort_index]
+
+            # collect number of nodes sent from other subgraphs for all_to_all_single
+            pre_post_aggr_from_splits.append(torch.unique(src_from_recv).shape[0])
+            
+            remote_edges_list_pre_post_aggr_from[0] = torch.cat((remote_edges_list_pre_post_aggr_from[0], \
+                                                                src_from_recv), \
+                                                                dim=0)
+            remote_edges_list_pre_post_aggr_from[1] = torch.cat((remote_edges_list_pre_post_aggr_from[1], \
+                                                                dst_from_recv), \
+                                                                dim=0)
+            
+            begin_edge_on_each_partition_from[i+1] = begin_edge_on_each_partition_from[i] + src_from_recv.shape[0]
+
+        begin_edge_on_each_partition_from[world_size] = remote_edges_list_pre_post_aggr_from[0].shape[0]
+            # ----------------------------------------------------------------
+        
+        # communicate with other mpi ranks to get the size of remote edges(pre_aggr and post_aggr)
+        # num_remote_edges_pre_post_aggr_from = [torch.tensor([indices.shape[0]], dtype=torch.int64) 
+        #                                        for indices in remote_edges_pre_post_aggr_from]
+        # num_remote_edges_pre_post_aggr_to = [torch.zeros(1, dtype=torch.int64) for _ in range(world_size)]
+        num_remote_edges_pre_post_aggr_from = torch.zeros(world_size, dtype=torch.int64)
+        for i in range(world_size):
+            num_remote_edges_pre_post_aggr_from[i] = remote_edges_pre_post_aggr_from[i].shape[0]
+        num_remote_edges_pre_post_aggr_to = torch.zeros(world_size, dtype=torch.int64)
+        send_splits = [1 for _ in range(world_size)]
+        recv_splits = [1 for _ in range(world_size)]
+
+        if world_size != 1:
+            # dist.all_to_all(num_remote_edges_pre_post_aggr_to, num_remote_edges_pre_post_aggr_from)
+            dist.all_to_all_single(num_remote_edges_pre_post_aggr_to, num_remote_edges_pre_post_aggr_from, \
+                                   recv_splits, send_splits)
+
+        # print("before transform, remote_edges_pre_post_aggr_from = {}".format(remote_edges_pre_post_aggr_from), flush=True)
+        # communicate with other mpi ranks to get the remote edges(pre_aggr and post_aggr)
+        # remote_edges_pre_post_aggr_to = [torch.empty((indices[0].item()), dtype=torch.int64)
+        #                                  for indices in num_remote_edges_pre_post_aggr_to]
+        remote_edges_pre_post_aggr_to = torch.empty((num_remote_edges_pre_post_aggr_to.sum().item()), dtype=torch.int64)
+        send_splits = [indices.item() for indices in num_remote_edges_pre_post_aggr_from]
+        remote_edges_pre_post_aggr_from = torch.cat(remote_edges_pre_post_aggr_from, dim=0)
+        recv_splits = [indices.item() for indices in num_remote_edges_pre_post_aggr_to]
+
+        if world_size != 1:
+            # dist.all_to_all(remote_edges_pre_post_aggr_to, remote_edges_pre_post_aggr_from)
+            dist.all_to_all_single(remote_edges_pre_post_aggr_to, remote_edges_pre_post_aggr_from, \
+                                    recv_splits, send_splits)
+        
+        remote_edges_pre_post_aggr_to = torch.split(remote_edges_pre_post_aggr_to, recv_splits, dim=0)
+
+        # print("before transform, remote_edges_pre_post_aggr_to = {}".format(remote_edges_pre_post_aggr_to), flush=True)
+        
+        remote_edges_list_pre_post_aggr_to, begin_edge_on_each_partition_to, pre_post_aggr_to_splits = \
+            DataProcessorForPreAggresive.process_remote_edges_pre_post_aggr_to(remote_edges_pre_post_aggr_to, world_size)
+
+        # print("before transform, remote_edges_list_pre_post_aggr_from = {}".format(remote_edges_list_pre_post_aggr_from), flush=True)
+        # print("before transform, remote_edges_list_pre_post_aggr_to = {}".format(remote_edges_list_pre_post_aggr_to), flush=True)
+        
+        del remote_edges_pre_post_aggr_from
+        del remote_edges_pre_post_aggr_to
+        
+        return remote_edges_list_pre_post_aggr_from, remote_edges_list_pre_post_aggr_to, \
+                begin_edge_on_each_partition_from, begin_edge_on_each_partition_to, \
+                pre_post_aggr_from_splits, pre_post_aggr_to_splits
