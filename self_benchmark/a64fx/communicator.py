@@ -15,11 +15,14 @@ def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
 
 
 class Communicator(object):
-    def __init__(self) -> None:
-        pass
+    def __init__(self, num_bits=32, is_async=False) -> None:
+        self.num_bits = num_bits
+        self.is_async = is_async
+        self.world_size = -1
+        self.rank = -1
+        Communicator.ctx = self
 
-    @staticmethod
-    def init_dist_group():
+    def init_dist_group(self):
         if dist.is_mpi_available():
             # backend with mpi
             print("mpi in torch.distributed is available!")
@@ -35,28 +38,52 @@ class Communicator(object):
             print("use ccl backend for torch.distributed package on x86 cpu.")
             dist.init_process_group(backend="ccl", init_method="env://", world_size=world_size, rank=rank)
 
-        print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
-        # number of process in this MPI group
-        world_size = dist.get_world_size()
-        # mpi rank in this MPI group
-        rank = dist.get_rank()
+        # print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
+        self.world_size = dist.get_world_size()
+        self.rank = dist.get_rank()
 
-        return (rank, world_size)
+        return (self.rank, self.world_size)
 
-    @staticmethod
-    def comm_with_fp32(recv_buf, send_buf, recv_splits, send_splits):
+    def comm(
+        self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, layer, is_training
+    ):
+        quantized_buf = None
+        dequantized_nodes_feat_range = None
+        dequantized_params = None
+
+        if self.num_bits == 32 or is_training is False:
+            comm_handle = self.comm_with_fp32(recv_buf, send_buf, recv_splits, send_splits)
+        elif self.num_bits == 16:
+            comm_handle = self.comm_with_fp16(
+                recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits
+            )
+        else:
+            nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(layer)
+            (
+                comm_handle,
+                quantized_buf,
+                dequantized_nodes_feat_range,
+                dequantized_params,
+            ) = self.comm_with_quantization_v1(
+                recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor
+            )
+
+        return (comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params)
+
+    def comm_with_fp32(self, recv_buf, send_buf, recv_splits, send_splits):
         barrier_begin = time.perf_counter()
         dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
-        handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=False)
+        comm_handle = dist.all_to_all_single(
+            recv_buf, send_buf, recv_splits, send_splits, async_op=self.is_async
+        )
         comm_end = time.perf_counter()
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_communication_time(comm_end - comm_begin)
-        return handle
+        return comm_handle
 
-    @staticmethod
-    def comm_with_fp16(recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits):
+    def comm_with_fp16(self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits):
         quantization_begin = time.perf_counter()
         send_buf_fp16.copy_(send_buf)
         quantization_end = time.perf_counter()
@@ -64,8 +91,8 @@ class Communicator(object):
         dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
-        handle = dist.all_to_all_single(
-            recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, async_op=False
+        comm_handle = dist.all_to_all_single(
+            recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, async_op=self.is_async
         )
         comm_end = time.perf_counter()
         dequantization_begin = time.perf_counter()
@@ -75,7 +102,7 @@ class Communicator(object):
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_communication_time(comm_end - comm_begin)
         TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)
-        return handle
+        return comm_handle
 
     @staticmethod
     def comm_with_quantization(
@@ -133,7 +160,7 @@ class Communicator(object):
         dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
         # print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
         # comm for quantized data
-        handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
+        comm_handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
         comm_end = time.perf_counter()
 
         TimeRecorder.ctx.record_quantization_time(quantize_end - quantize_begin)
@@ -142,30 +169,29 @@ class Communicator(object):
         # print_time(rank, "inner comm for data (ms): ", (comm_end - comm_for_data_begin) * 1000.0)
         # print_time(rank, "inner total comm (ms): ", (comm_end - quantize_begin) * 1000.0)
 
-        return handle
+        return comm_handle
 
-    @staticmethod
     def get_splits_for_comm_quantized_data(
+        self,
         recv_splits_tensor,
         send_splits_tensor,
         dequantized_nodes_feat_range,
         quantized_nodes_feat_range,
-        world_size,
     ):
         # prepare the buffer for receiving the quantized data based on the quantized params[0]
         # (range of quantized feature)
         quantized_recv_splits = list()
         quantized_send_splits = list()
 
-        recv_node_idx_begin = torch.empty((world_size + 1), dtype=torch.int32)
+        recv_node_idx_begin = torch.empty((self.world_size + 1), dtype=torch.int32)
         recv_node_idx_begin[0] = 0
         recv_node_idx_begin[1:] = recv_splits_tensor.cumsum(dim=0)
 
-        send_node_idx_begin = torch.empty((world_size + 1), dtype=torch.int32)
+        send_node_idx_begin = torch.empty((self.world_size + 1), dtype=torch.int32)
         send_node_idx_begin[0] = 0
         send_node_idx_begin[1:] = send_splits_tensor.cumsum(dim=0)
 
-        for rank in range(world_size):
+        for rank in range(self.world_size):
             quantized_recv_splits.append(
                 (
                     dequantized_nodes_feat_range[recv_node_idx_begin[rank + 1]]
@@ -181,10 +207,7 @@ class Communicator(object):
 
         return quantized_recv_splits, quantized_send_splits
 
-    @staticmethod
-    def comm_with_quantization_v1(
-        recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor, world_size
-    ):
+    def comm_with_quantization_v1(self, recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor):
         prepare_params_begin = time.perf_counter()
         recv_splits_tensor = torch.tensor(recv_splits, dtype=torch.int32)
         send_splits_tensor = torch.tensor(send_splits, dtype=torch.int32)
@@ -193,17 +216,17 @@ class Communicator(object):
 
         # create quantized params buffer for communication
         # [nodes_num_bits, zero_points, scales]
-        send_params = torch.empty((num_send_nodes, (2 + 1)), dtype=torch.float32)
+        send_params = torch.empty((num_send_nodes, 2 + 1), dtype=torch.float32)
 
         # to get the random bits for each node
         send_params[:, 0] = nodes_num_bits_tensor
 
         # get the range of each node's quantized feature
         quantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
-            num_send_nodes, send_buf.size(1), nodes_num_bits_tensor
+            int(num_send_nodes), send_buf.size(1), nodes_num_bits_tensor
         )
 
-        quantized_send_buf = torch.empty(quantized_nodes_feat_range[-1], dtype=torch.uint8)
+        quantized_send_buf = torch.empty(quantized_nodes_feat_range[-1].item(), dtype=torch.uint8)
         prepare_params_end = time.perf_counter()
 
         quantization_begin = time.perf_counter()
@@ -211,15 +234,6 @@ class Communicator(object):
         Quantizer_v1.quantize_fp32_to_intX(
             send_buf, quantized_send_buf, quantized_nodes_feat_range, send_params
         )
-
-        # scale = (send_buf.max(dim=1)[0] - send_buf.min(dim=1)[0] + 1e-30) / (2**8 - 1)
-        # zero_point = send_buf.min(dim=1)[0] / scale * (-1)
-        # quantized_send_buf_ref = torch.quantize_per_channel(
-        #     send_buf, scale, zero_point, axis=0, dtype=torch.quint8
-        # )
-        # quantized_send_buf = quantized_send_buf_ref.int_repr().reshape(-1)
-        # send_params[:, 1] = zero_point
-        # send_params[:, 2] = scale
 
         quantization_end = time.perf_counter()
 
@@ -229,7 +243,7 @@ class Communicator(object):
 
         # comm_for_param_begin = time.perf_counter()
         # prepare the buffer for receiving the quantized params
-        recv_params = torch.empty((num_recv_nodes, (2 + 1)), dtype=torch.float32)
+        recv_params = torch.empty((num_recv_nodes, 2 + 1), dtype=torch.float32)
 
         comm_for_data_begin = time.perf_counter()
         # communication for quantized params
@@ -238,27 +252,26 @@ class Communicator(object):
 
         # get the range of each node's dequantized feature
         dequantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
-            num_recv_nodes, send_buf.size(1), dequantized_params[:, 0]
+            int(num_recv_nodes), send_buf.size(1), dequantized_params[:, 0]
         )
 
         # get the splits for communication of quantized data
-        quantized_recv_splits, quantized_send_splits = Communicator.get_splits_for_comm_quantized_data(
+        quantized_recv_splits, quantized_send_splits = self.get_splits_for_comm_quantized_data(
             recv_splits_tensor,
             send_splits_tensor,
             dequantized_nodes_feat_range,
             quantized_nodes_feat_range,
-            world_size,
         )
 
-        quantized_recv_buf = torch.empty((dequantized_nodes_feat_range[-1]), dtype=torch.uint8)
+        quantized_recv_buf = torch.empty(dequantized_nodes_feat_range[-1].item(), dtype=torch.uint8)
 
         # communication for quantized data
-        dist.all_to_all_single(
+        comm_handle = dist.all_to_all_single(
             quantized_recv_buf,
             quantized_send_buf,
             quantized_recv_splits,
             quantized_send_splits,
-            async_op=False,
+            async_op=self.is_async,
         )
         comm_for_data_end = time.perf_counter()
 
@@ -283,7 +296,7 @@ class Communicator(object):
         )
         TimeRecorder.ctx.record_communication_time(comm_for_data_end - comm_for_data_begin)
 
-        return (quantized_recv_buf, dequantized_nodes_feat_range, dequantized_params)
+        return (comm_handle, quantized_recv_buf, dequantized_nodes_feat_range, dequantized_params)
 
     @staticmethod
     def convert_data_to_fp32(
@@ -306,17 +319,3 @@ class Communicator(object):
         #     dist.get_rank(), "inner dequantize data (ms): ", (dequantize_end - dequantize_begin) * 1000.0
         # )
         TimeRecorder.ctx.record_dequantization_time(dequantize_end - dequantize_begin)
-
-    @staticmethod
-    def convert_data_to_fp32_v1(quantized_recv_buf, recv_buf, quantized_nodes_feat_range, dequantized_params):
-        dequantization_begin = time.perf_counter()
-        Quantizer_v1.dequantize_intX_to_fp32(
-            quantized_recv_buf, recv_buf, quantized_nodes_feat_range, dequantized_params
-        )
-        # zero_point = dequantized_params[:, 1]
-        # scale = dequantized_params[:, 2]
-        # recv_buf.copy_(
-        #     (quantized_recv_buf.view(zero_point.size(0), -1) - zero_point.view(-1, 1)) * scale.view(-1, 1)
-        # )
-        dequantization_end = time.perf_counter()
-        TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)

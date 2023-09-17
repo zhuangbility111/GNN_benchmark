@@ -2,16 +2,9 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 from torch.nn import Parameter
-from torch_sparse import fill_diag
-from torch_sparse import sum as sparsesum
 
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
-from torch_geometric.nn.inits import zeros
-from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
-
-import quantization_cpu
-import math
 
 import time
 import sys
@@ -19,267 +12,7 @@ import sys
 sys.path.append("../../")
 
 from time_recorder import TimeRecorder
-from communicator import Communicator
-from assigner import Assigner
-
-
-def get_deg(local_adj_t, remote_adj_t, add_self_loops=False):
-    if not local_adj_t.has_value():
-        local_adj_t = local_adj_t.fill_value(1.0)
-
-    if not remote_adj_t.has_value():
-        remote_adj_t = remote_adj_t.fill_value(1.0)
-
-    if add_self_loops:
-        local_adj_t = fill_diag(local_adj_t, 1.0)
-
-    local_deg = sparsesum(local_adj_t, dim=1)
-    if remote_adj_t.size(0) != 0:
-        local_deg += sparsesum(remote_adj_t, dim=1)
-
-    return local_deg.unsqueeze(-1)
-
-
-class Aggregate_for_local_and_remote(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, graph, local_nodes_feat, layer, num_bits, is_training):
-        ctx.graph = graph
-        ctx.num_bits = num_bits
-        ctx.layer = layer
-
-        prepare_comm_begin = time.perf_counter()
-
-        num_recv_nodes = sum(graph.num_nodes_recv_from_others)
-        num_send_nodes = sum(graph.num_nodes_send_to_others)
-
-        graph.comm_buf.resize_buffer(
-            (num_send_nodes, local_nodes_feat.size(-1)), (num_recv_nodes, local_nodes_feat.size(-1))
-        )
-
-        send_nodes_feat_buf = graph.comm_buf.send_buf
-        recv_nodes_feat_buf = graph.comm_buf.recv_buf
-
-        send_nodes_feat_fp16_buf = graph.comm_buf.send_buf_fp16
-        recv_nodes_feat_fp16_buf = graph.comm_buf.recv_buf_fp16
-
-        world_size = dist.get_world_size()
-
-        comm_begin = time.perf_counter()
-        if world_size > 1:
-            # collect the local node feats to send to other subgraph
-            torch.index_select(local_nodes_feat, 0, graph.idx_nodes_send_to_others, out=send_nodes_feat_buf)
-
-            if num_bits == 32 or is_training is False:
-                handle = Communicator.comm_with_fp32(
-                    recv_nodes_feat_buf,
-                    send_nodes_feat_buf,
-                    graph.num_nodes_recv_from_others,
-                    graph.num_nodes_send_to_others,
-                )
-            elif num_bits == 16:
-                handle = Communicator.comm_with_fp16(
-                    recv_nodes_feat_buf,
-                    send_nodes_feat_buf,
-                    recv_nodes_feat_fp16_buf,
-                    send_nodes_feat_fp16_buf,
-                    graph.num_nodes_recv_from_others,
-                    graph.num_nodes_send_to_others,
-                )
-            else:
-                # nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
-                nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(f"forward{layer}")
-                (
-                    quantized_buf,
-                    dequantized_nodes_feat_range,
-                    dequantized_params,
-                ) = Communicator.comm_with_quantization_v1(
-                    recv_nodes_feat_buf,
-                    send_nodes_feat_buf,
-                    graph.num_nodes_recv_from_others,
-                    graph.num_nodes_send_to_others,
-                    nodes_num_bits_tensor,
-                    world_size,
-                )
-                # print("quantized_buf: ", quantized_buf)
-                # print("quantized_buf.max(): ", quantized_buf.max())
-                # print("quantized_buf.min(): ", quantized_buf.min())
-                # print("dequantized_nodes_feat_range: ", dequantized_nodes_feat_range)
-                handle = None
-        else:
-            handle = None
-
-        comm_end = time.perf_counter()
-        rank = dist.get_rank()
-        TimeRecorder.print_time(rank, "outer total comm (ms): ", (comm_end - comm_begin) * 1000.0)
-        # print("outer total comm (ms): {}".format((comm_end - comm_begin) * 1000.0))
-        out = torch.zeros([graph.local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
-        local_aggregate_begin = time.perf_counter()
-        # aggregate message from local nodes
-        SPMM_forward(graph.local_adj_t, local_nodes_feat, out)
-
-        async_wait_begin = time.perf_counter()
-        if handle is not None:
-            handle.wait()
-
-        convert_data_begin = time.perf_counter()
-        # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
-        if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0 and is_training:
-            Communicator.convert_data_to_fp32_v1(
-                quantized_buf, recv_nodes_feat_buf, dequantized_nodes_feat_range, dequantized_params
-            )
-
-            # print("dequantized_feat_buf: ", recv_nodes_feat_buf)
-            # print("dequantized_feat_buf.max(): ", recv_nodes_feat_buf.max())
-            # print("dequantized_feat_buf.min(): ", recv_nodes_feat_buf.min())
-
-            # zero_point = dequantized_params[:, 1].unsqueeze(-1)
-            # scale = dequantized_params[:, 2].unsqueeze(-1)
-
-            # print("zero_point: ", zero_point)
-            # print("zero_point.max(): ", zero_point.max())
-            # print("zero_point.min(): ", zero_point.min())
-            # print("scale: ", scale)
-            # print("scale.max(): ", scale.max())
-            # print("scale.min(): ", scale.min())
-
-        convert_data_end = time.perf_counter()
-        # print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
-        # print("inner convert data (ms): {}".format((convert_data_end - convert_data_begin) * 1000.0))
-
-        remote_aggregate_begin = time.perf_counter()
-        remote_nodes_feat = recv_nodes_feat_buf
-        # aggregate message from remote nodes
-        if remote_nodes_feat.size(0) != 0:
-            SPMM_forward(graph.remote_adj_t, remote_nodes_feat, out)
-
-        sum_message_end = time.perf_counter()
-
-        TimeRecorder.print_time(
-            rank, "inner propagate forward (ms): ", (sum_message_end - prepare_comm_begin) * 1000.0
-        )
-        TimeRecorder.ctx.record_total_convolution_time(sum_message_end - prepare_comm_begin)
-        TimeRecorder.ctx.next_layer()
-        # print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
-
-        # return local_out
-        return out
-
-    @staticmethod
-    def backward(ctx, local_out_grad):
-        graph = ctx.graph
-        num_bits = ctx.num_bits
-        layer = ctx.layer
-
-        if ctx.needs_input_grad[1]:
-            # scatter gradient to remote nodes
-            backward_begin = time.perf_counter()
-            num_send_nodes = sum(graph.num_nodes_recv_from_others)
-            num_recv_nodes = sum(graph.num_nodes_send_to_others)
-
-            graph.comm_buf.resize_buffer(
-                (num_recv_nodes, local_out_grad.size(-1)), (num_send_nodes, local_out_grad.size(-1))
-            )
-
-            remote_nodes_grad_buf = graph.comm_buf.recv_buf
-            local_nodes_grad_buf = graph.comm_buf.send_buf
-
-            remote_nodes_grad_fp16_buf = graph.comm_buf.recv_buf_fp16
-            local_nodes_grad_fp16_buf = graph.comm_buf.send_buf_fp16
-
-            remote_nodes_grad_buf.zero_()
-            if remote_nodes_grad_buf.size(0) != 0:
-                SPMM_backward(graph.remote_adj_t, local_out_grad, remote_nodes_grad_buf)
-
-            world_size = dist.get_world_size()
-
-            # communicate to obtain the local node grads from other subgraph
-            if world_size > 1:
-                if num_bits == 32:
-                    handle = Communicator.comm_with_fp32(
-                        local_nodes_grad_buf,
-                        remote_nodes_grad_buf,
-                        graph.num_nodes_send_to_others,
-                        graph.num_nodes_recv_from_others,
-                    )
-                elif num_bits == 16:
-                    handle = Communicator.comm_with_fp16(
-                        local_nodes_grad_buf,
-                        remote_nodes_grad_buf,
-                        local_nodes_grad_fp16_buf,
-                        remote_nodes_grad_fp16_buf,
-                        graph.num_nodes_send_to_others,
-                        graph.num_nodes_recv_from_others,
-                    )
-                else:
-                    # nodes_num_bits_tensor = Assigner.assign_node_dataformat_randomly(num_send_nodes, num_bits)
-                    nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(f"backward{layer}")
-                    (
-                        quantized_buf,
-                        dequantized_nodes_feat_range,
-                        dequantized_params,
-                    ) = Communicator.comm_with_quantization_v1(
-                        local_nodes_grad_buf,
-                        remote_nodes_grad_buf,
-                        graph.num_nodes_send_to_others,
-                        graph.num_nodes_recv_from_others,
-                        nodes_num_bits_tensor,
-                        world_size,
-                    )
-                    handle = None
-                    # print("backward quantized_buf: ", quantized_buf)
-                    # print("backward quantized_buf.max(): ", quantized_buf.max())
-                    # print("backward quantized_buf.min(): ", quantized_buf.min())
-                    # print("backward dequantized_nodes_feat_range: ", dequantized_nodes_feat_range)
-            else:
-                handle = None
-
-            # scatter gradient to local nodes
-            local_nodes_grad = torch.zeros(
-                [graph.local_adj_t.sparse_size(-1), local_out_grad.size(-1)], dtype=torch.float
-            )
-            SPMM_backward(graph.local_adj_t, local_out_grad, local_nodes_grad)
-
-            if handle is not None:
-                handle.wait()
-
-            # convert communication data to fp32
-            if num_bits != 32 and num_bits != 16 and num_recv_nodes != 0:
-                Communicator.convert_data_to_fp32_v1(
-                    quantized_buf, local_nodes_grad_buf, dequantized_nodes_feat_range, dequantized_params
-                )
-
-                # print("backward dequantized_feat_buf: ", local_nodes_grad_buf)
-                # print("backward dequantized_feat_buf.max(): ", local_nodes_grad_buf.max())
-                # print("backward dequantized_feat_buf.min(): ", local_nodes_grad_buf.min())
-
-                # zero_point = dequantized_params[:, 1].unsqueeze(-1)
-                # scale = dequantized_params[:, 2].unsqueeze(-1)
-
-                # print("backward zero_point: ", zero_point)
-                # print("backward zero_point.max(): ", zero_point.max())
-                # print("backward zero_point.min(): ", zero_point.min())
-                # print("backward scale: ", scale)
-                # print("backward scale.max(): ", scale.max())
-                # print("backward scale.min(): ", scale.min())
-
-            index_add_begin = time.perf_counter()
-            # then accumulate the local node grads
-            local_nodes_grad_from = local_nodes_grad_buf
-            if local_nodes_grad_from.size(0) != 0:
-                local_nodes_grad.index_add_(
-                    dim=0, index=graph.idx_nodes_send_to_others, source=local_nodes_grad_from
-                )
-
-            index_add_end = time.perf_counter()
-            backward_end = time.perf_counter()
-            TimeRecorder.ctx.record_total_convolution_time(backward_end - backward_begin)
-            TimeRecorder.ctx.next_layer()
-
-        return None, local_nodes_grad, None, None, None
-
-
-def aggregate_for_local_and_remote(graph, local_nodes_feat, layer, num_bits, is_training):
-    return Aggregate_for_local_and_remote.apply(graph, local_nodes_feat, layer, num_bits, is_training)
+from .aggregator import Aggregator
 
 
 class DistSAGEConvGrad(MessagePassing):
@@ -287,7 +20,8 @@ class DistSAGEConvGrad(MessagePassing):
         self,
         in_channels: int,
         out_channels: int,
-        num_bits: int = 32,
+        num_bits: int,
+        is_pre_delay: bool,
         add_self_loops: bool = False,
         normalize: bool = True,
         bias: bool = True,
@@ -300,8 +34,8 @@ class DistSAGEConvGrad(MessagePassing):
         self.out_channels = out_channels
         self.add_self_loops = add_self_loops
         self.normalize = normalize
-        self.local_deg = None
         self.num_bits = num_bits
+        self.is_pre_delay = is_pre_delay
 
         self.lin_neigh = Linear(in_channels, out_channels, bias=False)
         self.lin_self = Linear(in_channels, out_channels, bias=False)
@@ -322,8 +56,10 @@ class DistSAGEConvGrad(MessagePassing):
         # self.lin.reset_parameters()
         # zeros(self.bias)
 
-    def propagate(self, graph, local_nodes_feat, layer, num_bits, is_training):
-        local_out = aggregate_for_local_and_remote(graph, local_nodes_feat, layer, num_bits, is_training)
+    def propagate(self, graph, local_nodes_feat, layer):
+        local_out = Aggregator.apply(
+            graph, local_nodes_feat, layer, self.num_bits, self.is_pre_delay, self.training
+        )
         return local_out
 
     def forward(self, graph, local_nodes_feat, layer) -> Tensor:
@@ -338,7 +74,7 @@ class DistSAGEConvGrad(MessagePassing):
         # local_nodes_feat = self.lin(local_nodes_feat)
 
         propagate_begin = time.perf_counter()
-        out = self.propagate(graph, local_nodes_feat, layer, self.num_bits, self.training)
+        out = self.propagate(graph, local_nodes_feat, layer)
 
         add_bias_begin = time.perf_counter()
         TimeRecorder.print_time(
@@ -348,12 +84,8 @@ class DistSAGEConvGrad(MessagePassing):
         # out += local_nodes_feat
 
         if self.normalize:
-            local_deg = self.local_deg
-            if local_deg is None:
-                local_deg = get_deg(graph.local_adj_t, graph.remote_adj_t, self.add_self_loops).clamp(min=1)
-                self.local_deg = local_deg
-            # out /= local_deg + 1
-            out /= local_deg
+            # out /= graph.in_degrees + 1
+            out /= graph.in_degrees
 
         # if not linear_first:
         out = self.lin_neigh(out)

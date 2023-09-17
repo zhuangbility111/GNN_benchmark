@@ -25,18 +25,12 @@ class DistSAGE(torch.nn.Module):
 
         self.convs = torch.nn.ModuleList()
         self.norms = torch.nn.ModuleList()
-        if not is_pre_delay:
-            self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels, num_bits))
+        self.convs.append(DistSAGEConvGrad(in_channels, hidden_channels, num_bits, is_pre_delay))
+        self.norms.append(LayerNorm(hidden_channels))
+        for _ in range(num_layers - 2):
+            self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, num_bits, is_pre_delay))
             self.norms.append(LayerNorm(hidden_channels))
-            for _ in range(num_layers - 2):
-                self.convs.append(DistSAGEConvGrad(hidden_channels, hidden_channels, num_bits))
-                self.norms.append(LayerNorm(hidden_channels))
-            self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, num_bits))
-        # else:
-        #     self.convs.append(DistSAGEConvGradWithPre(in_channels, hidden_channels, is_fp16))
-        #     for _ in range(num_layers - 2):
-        #         self.convs.append(DistSAGEConvGradWithPre(hidden_channels, hidden_channels, is_fp16))
-        #     self.convs.append(DistSAGEConvGradWithPre(hidden_channels, out_channels, is_fp16))
+        self.convs.append(DistSAGEConvGrad(hidden_channels, out_channels, num_bits, is_pre_delay))
 
         self.dropout = dropout
 

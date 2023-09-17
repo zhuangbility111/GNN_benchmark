@@ -23,24 +23,10 @@ def train(model, data, optimizer, num_epochs, num_bits):
     total_backward_dur = 0
     total_update_weight_dur = 0
 
-    node_dataformat_assign_period = 200
-
-    if num_bits == 8:
-        assign_weight = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
-    elif num_bits == 4:
-        assign_weight = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
-    elif num_bits == 2:
-        assign_weight = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
-    elif num_bits == -1:
-        assign_weight = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32)
-    else:
-        assign_weight = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
-
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
     model.train()
     for epoch in range(num_epochs):
-        if num_bits != 32 and num_bits != 16 and epoch % node_dataformat_assign_period == 0:
-            Assigner.ctx.assign_node_dataformat_randomly(assign_weight, num_bits)
+        Assigner.ctx.reassign_node_dataformat(epoch)
         forward_start = time.perf_counter()
         optimizer.zero_grad()
         out = model(data["graph"], data["nodes_features"])
@@ -129,9 +115,11 @@ if __name__ == "__main__":
     # config['is_fp16'] = True if args.is_fp16 == 'true' else False
     config["num_bits"] = args.num_bits
     config["is_pre_delay"] = True if args.is_pre_delay == "true" else False
+
     print(config, flush=True)
 
-    rank, world_size = Communicator.init_dist_group()
+    Communicator(config["num_bits"])
+    rank, world_size = Communicator.ctx.init_dist_group()
     config["input_dir"] += "ogbn_{}_{}_part/".format(config["graph_name"], world_size)
 
     set_random_seed(config["random_seed"])
@@ -139,7 +127,12 @@ if __name__ == "__main__":
     data = load_data(config)
 
     Assigner(
-        config["num_layers"], data["graph"].comm_buf.send_buf.size(0), data["graph"].comm_buf.recv_buf.size(0)
+        config["num_bits"],
+        config["num_layers"],
+        torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32),
+        config["assign_period"],
+        data["graph"].comm_buf.send_buf.size(0),
+        data["graph"].comm_buf.recv_buf.size(0),
     )
 
     TimeRecorder(config["num_layers"], config["num_epochs"])
