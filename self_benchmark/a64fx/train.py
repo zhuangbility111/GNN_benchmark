@@ -14,47 +14,32 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from time_recorder import TimeRecorder
 
 
-def train(model, data, optimizer, num_epochs, num_bits):
+def collect_acc(model, data):
+    # check accuracy
+    TimeRecorder.ctx.set_is_training(False)
+    model.eval()
+    predict_result = []
+    out = model(data["graph"], data["nodes_features"])
+    for mask in (data["nodes_train_masks"], data["nodes_valid_masks"], data["nodes_test_masks"]):
+        num_correct_samples = (
+            (out[mask].argmax(-1) == data["nodes_labels"][mask]).sum() if mask.size(0) != 0 else 0
+        )
+        num_samples = mask.size(0)
+        predict_result.append(num_correct_samples)
+        predict_result.append(num_samples)
+    predict_result = torch.tensor(predict_result)
+    dist.all_reduce(predict_result, op=dist.ReduceOp.SUM)
+
+    train_acc = float(predict_result[0] / predict_result[1])
+    val_acc = float(predict_result[2] / predict_result[3])
+    test_acc = float(predict_result[4] / predict_result[5])
+    TimeRecorder.ctx.set_is_training(True)
+    return train_acc, val_acc, test_acc
+
+
+def print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    # start training
-    start = time.perf_counter()
-    total_forward_dur = 0
-    total_backward_dur = 0
-    total_update_weight_dur = 0
-
-    # with profile(activities=[ProfilerActivity.CPU]) as prof:
-    model.train()
-    for epoch in range(num_epochs):
-        Assigner.ctx.reassign_node_dataformat(epoch)
-        forward_start = time.perf_counter()
-        optimizer.zero_grad()
-        out = model(data["graph"], data["nodes_features"])
-        backward_start = time.perf_counter()
-        loss = F.nll_loss(out[data["nodes_train_masks"]], data["nodes_labels"][data["nodes_train_masks"]])
-        loss.backward()
-
-        update_weight_start = time.perf_counter()
-        optimizer.step()
-        update_weight_end = time.perf_counter()
-        total_forward_dur += backward_start - forward_start
-        total_backward_dur += update_weight_start - backward_start
-        total_update_weight_dur += update_weight_end - update_weight_start
-        if rank == 0:
-            print(
-                "rank: {}, epoch: {}, loss: {}, time: {}".format(
-                    rank, epoch, loss.item(), (update_weight_end - forward_start)
-                ),
-                flush=True,
-            )
-        TimeRecorder.ctx.next_epoch()
-
-    end = time.perf_counter()
-    total_training_dur = end - start
-
-    # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=20))
-    # prof.export_chrome_trace("trace.json")
-
     total_forward_dur = torch.tensor([total_forward_dur])
     total_backward_dur = torch.tensor([total_backward_dur])
     total_update_weight_dur = torch.tensor([total_update_weight_dur])
@@ -67,7 +52,7 @@ def train(model, data, optimizer, num_epochs, num_bits):
     dist.reduce(ave_total_training_dur, 0, op=dist.ReduceOp.SUM)
     dist.reduce(max_total_training_dur, 0, op=dist.ReduceOp.MAX)
 
-    if rank == 0:
+    if dist.get_rank() == 0:
         print("training end.")
         print("forward_time(ms): {}".format(total_forward_dur[0] / float(world_size) * 1000))
         print("backward_time(ms): {}".format(total_backward_dur[0] / float(world_size) * 1000))
@@ -80,27 +65,43 @@ def train(model, data, optimizer, num_epochs, num_bits):
         print("total_training_time(max)(ms): {}".format(max_total_training_dur[0] * 1000.0))
 
 
-def test(model, data):
+def train(model, data, optimizer, num_epochs, num_bits):
     rank = dist.get_rank()
-    # check accuracy
-    model.eval()
-    predict_result = []
-    out = model(data["graph"], data["nodes_features"])
-    for mask in (data["nodes_train_masks"], data["nodes_valid_masks"], data["nodes_test_masks"]):
-        num_correct_samples = (
-            (out[mask].argmax(-1) == data["nodes_labels"][mask]).sum() if mask.size(0) != 0 else 0
-        )
-        num_samples = mask.size(0)
-        predict_result.append(num_correct_samples)
-        predict_result.append(num_samples)
-    predict_result = torch.tensor(predict_result)
-    dist.reduce(predict_result, 0, op=dist.ReduceOp.SUM)
+    world_size = dist.get_world_size()
+    # start training
+    total_forward_dur = 0
+    total_backward_dur = 0
+    total_update_weight_dur = 0
+    total_training_dur = 0
 
-    if rank == 0:
-        train_acc = float(predict_result[0] / predict_result[1])
-        val_acc = float(predict_result[2] / predict_result[3])
-        test_acc = float(predict_result[4] / predict_result[5])
-        print(f"Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}")
+    # with profile(activities=[ProfilerActivity.CPU]) as prof:
+    for epoch in range(num_epochs):
+        model.train()
+        forward_start = time.perf_counter()
+        Assigner.ctx.reassign_node_dataformat(epoch)
+        optimizer.zero_grad()
+        out = model(data["graph"], data["nodes_features"])
+        backward_start = time.perf_counter()
+        loss = F.nll_loss(out[data["nodes_train_masks"]], data["nodes_labels"][data["nodes_train_masks"]])
+        loss.backward()
+
+        update_weight_start = time.perf_counter()
+        optimizer.step()
+        update_weight_end = time.perf_counter()
+        total_forward_dur += backward_start - forward_start
+        total_backward_dur += update_weight_start - backward_start
+        total_update_weight_dur += update_weight_end - update_weight_start
+        total_training_dur += update_weight_end - forward_start
+
+        train_acc, val_acc, test_acc = collect_acc(model, data)
+
+        if rank == 0:
+            print(
+                f"Rank: {rank}, World_size: {world_size}, Epoch: {epoch}, Loss: {loss}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}, Time: {(update_weight_end - forward_start):.6f}"
+            )
+        TimeRecorder.ctx.next_epoch()
+
+    print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
 
 
 if __name__ == "__main__":
@@ -118,9 +119,16 @@ if __name__ == "__main__":
 
     print(config, flush=True)
 
-    Communicator(config["num_bits"])
+    Communicator(config["num_bits"], config["is_async"])
     rank, world_size = Communicator.ctx.init_dist_group()
-    config["input_dir"] += "ogbn_{}_{}_part/".format(config["graph_name"], world_size)
+    if (
+        config["graph_name"] != "arxiv"
+        and config["graph_name"] != "products"
+        and config["graph_name"] != "papers100M"
+    ):
+        config["input_dir"] += "{}_{}_part/".format(config["graph_name"], world_size)
+    else:
+        config["input_dir"] += "ogbn_{}_{}_part/".format(config["graph_name"], world_size)
 
     set_random_seed(config["random_seed"])
     model, optimizer = create_model_and_optimizer(config)
@@ -158,5 +166,3 @@ if __name__ == "__main__":
         print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
         print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
         print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
-
-    test(model, data)
