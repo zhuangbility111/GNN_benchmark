@@ -15,7 +15,7 @@ def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
 
 
 class Communicator(object):
-    def __init__(self, num_bits=32, is_async=False) -> None:
+    def __init__(self, num_bits=32, is_async=True) -> None:
         self.num_bits = num_bits
         self.is_async = is_async
         self.world_size = -1
@@ -27,8 +27,11 @@ class Communicator(object):
             # backend with mpi
             print("mpi in torch.distributed is available!")
             dist.init_process_group(backend="mpi")
-            # fugaku, reserve 1 thread for asynchronous
-            torch.set_num_threads(11)
+            if self.is_async:
+                # fugaku, reserve 1 thread for asynchronous
+                torch.set_num_threads(11)
+            else:
+                torch.set_num_threads(12)
         else:
             # backend with torch_ccl
             import torch_ccl
@@ -72,7 +75,7 @@ class Communicator(object):
 
     def comm_with_fp32(self, recv_buf, send_buf, recv_splits, send_splits):
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
         comm_handle = dist.all_to_all_single(
@@ -81,6 +84,8 @@ class Communicator(object):
         comm_end = time.perf_counter()
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_communication_time(comm_end - comm_begin)
+        # TimeRecorder.print_time(dist.get_rank(), "inner comm is async: ", self.is_async)
+        # TimeRecorder.print_time(dist.get_rank(), "inner comm (ms): ", (comm_end - comm_begin) * 1000.0)
         return comm_handle
 
     def comm_with_fp16(self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits):
@@ -88,7 +93,7 @@ class Communicator(object):
         send_buf_fp16.copy_(send_buf)
         quantization_end = time.perf_counter()
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
         comm_handle = dist.all_to_all_single(
@@ -152,7 +157,7 @@ class Communicator(object):
         # TimeRecorder.print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
 
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
         # print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
         # comm for quantized params (scale and zero_point)
@@ -238,17 +243,19 @@ class Communicator(object):
         quantization_end = time.perf_counter()
 
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
 
         # comm_for_param_begin = time.perf_counter()
         # prepare the buffer for receiving the quantized params
-        recv_params = torch.empty((num_recv_nodes, 2 + 1), dtype=torch.float32)
+        # recv_params = torch.empty((num_recv_nodes, 2 + 1), dtype=torch.float32)
+        recv_params = torch.empty((num_recv_nodes, 2 + 1), dtype=torch.bfloat16)
+        send_params = send_params.to(torch.bfloat16)
 
         comm_for_data_begin = time.perf_counter()
         # communication for quantized params
         dist.all_to_all_single(recv_params, send_params, recv_splits, send_splits, async_op=False)
-        dequantized_params = recv_params
+        dequantized_params = recv_params.to(torch.float32)
 
         # get the range of each node's dequantized feature
         dequantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
@@ -295,6 +302,9 @@ class Communicator(object):
             quantization_end - quantization_begin + prepare_params_end - prepare_params_begin
         )
         TimeRecorder.ctx.record_communication_time(comm_for_data_end - comm_for_data_begin)
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner comm (ms): ", (comm_for_data_end - comm_for_data_begin) * 1000.0
+        # )
 
         return (comm_handle, quantized_recv_buf, dequantized_nodes_feat_range, dequantized_params)
 
