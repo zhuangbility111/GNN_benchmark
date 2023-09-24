@@ -1,9 +1,9 @@
-input_dir : "../../dataset/ogbn_products_new/balanced_training_samples/"
-graph_name : "products"
+input_dir : "../../dataset/reddit/balanced_training_samples/"
+graph_name : "reddit"
 model_name : "sage"
-in_channels : 100
+in_channels : 602
 hidden_channels : 256
-out_channels : 47
+out_channels : 41
 num_layers : 3
 dropout : 0.5
 lr : 0.01

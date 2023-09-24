@@ -8,5 +8,6 @@ num_layers : 3
 dropout : 0.5
 lr : 0.01
 weight_decay : 0
-num_epochs : 10
+num_epochs : 20
 random_seed : 0
+assign_period : 5
