@@ -150,7 +150,133 @@ void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, in
     delete [] work_range;
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+void quantize_tensor_v1(Tensor input, Tensor output,
+                        Tensor quantized_nodes_feat_range, Tensor quantized_params)
+{
+    int vertex_num = input.size(0);
+    int feat_len = input.size(1);
+
+    quantized_nodes_feat_range = quantized_nodes_feat_range.contiguous();
+    // nodes_num_bits_tensor = nodes_num_bits_tensor.contiguous();
+    // zero_points = zero_points.contiguous();
+    // scales = scales.contiguous();
+    quantized_params = quantized_params.contiguous();
+
+    float *input_ptr = input.data_ptr<float>();
+    int64_t *quantized_nodes_feat_range_ptr = quantized_nodes_feat_range.data_ptr<int64_t>();
+    // int *nodes_num_bits_ptr = nodes_num_bits_tensor.data_ptr<int>(); // [num_bits]
+    // float *zero_points_ptr = zero_points.data_ptr<float>();
+    // float *scales_ptr = scales.data_ptr<float>();
+    float *quantized_params_ptr = quantized_params.data_ptr<float>(); // [num_bits, zero_point, scale]
+
+    uint8_t *output_ptr = output.data_ptr<uint8_t>();
+
+    // std::mt19937 rng{std::random_device{}()};
+    // std::uniform_real_distribution<float> dist{0.0, 1.0};
+
+#pragma omp parallel for
+    for (int i = 0; i < vertex_num; i++)
+    {
+        // get max and min of this row
+        float max_val = input_ptr[i * feat_len];
+        float min_val = input_ptr[i * feat_len];
+        for (int j = 1; j < feat_len; j++)
+        {
+            float val = input_ptr[i * feat_len + j];
+            max_val = std::max(max_val, val);
+            min_val = std::min(min_val, val);
+        }
+
+        // int num_bits = nodes_num_bits_ptr[i];
+        // int num_bits = 8;
+        int num_bits = static_cast<int>(quantized_params_ptr[i * 3]);
+        float zero_point = min_val;
+        float scale = (max_val - zero_point) / ((1 << num_bits) - 1);
+        if (scale == 0)
+            scale = 1.0f;
+
+        quantized_params_ptr[i * 3 + 1] = zero_point;
+        quantized_params_ptr[i * 3 + 2] = scale;
+
+        const int elems_per_byte = 8 / num_bits;
+        for (int j = 0; j < feat_len; j += elems_per_byte)
+        {
+            const int remain_feat_len = std::min(elems_per_byte, feat_len - j);
+            uint8_t packed_val = 0;
+            for (int k = 0; k < remain_feat_len; k++)
+            {
+                const int32_t val =
+                    lrintf((input_ptr[i * feat_len + j + k] - zero_point) / scale);
+                // float noise = dist(rng);
+                // const int32_t val =
+                //     static_cast<int>((input_ptr[i * feat_len + j + k] - zero_point) / scale + noise);
+                packed_val |= (val << ((elems_per_byte - k - 1) * num_bits));
+            }
+            output_ptr[quantized_nodes_feat_range_ptr[i] + j / elems_per_byte] = packed_val;
+        }
+    }
+}
+
+void dequantize_tensor_v1(Tensor input, Tensor output,
+                          Tensor quantized_nodes_feat_range, Tensor quantized_params)
+{
+    int vertex_num = output.size(0);
+    int unpacked_feat_len = output.size(1);
+
+    quantized_nodes_feat_range = quantized_nodes_feat_range.contiguous();
+    quantized_params = quantized_params.contiguous();
+    // zero_points = zero_points.contiguous();
+    // scales = scales.contiguous();
+
+    uint8_t *input_ptr = input.data_ptr<uint8_t>();
+    int64_t *quantized_nodes_feat_range_ptr = quantized_nodes_feat_range.data_ptr<int64_t>();
+    float *quantized_params_ptr = quantized_params.data_ptr<float>(); // [num_bits, zero_point, scale]
+    // int *nodes_num_bits_ptr = nodes_num_bits_tensor.data_ptr<int>(); // [num_bits]
+    // float *zero_points_ptr = zero_points.data_ptr<float>();
+    // float *scales_ptr = scales.data_ptr<float>();
+
+    float *output_ptr = output.data_ptr<float>();
+
+#pragma omp parallel for
+    for (int i = 0; i < vertex_num; i++)
+    {
+        int num_bits = static_cast<int>(quantized_params_ptr[i * 3]);
+        float zero_point = quantized_params_ptr[i * 3 + 1];
+        float scale = quantized_params_ptr[i * 3 + 2];
+        // int num_bits = nodes_num_bits_ptr[i];
+        // float scale = scales_ptr[i];
+        // float zero_point = zero_points_ptr[i];
+
+        int packed_feat_begin = quantized_nodes_feat_range_ptr[i];
+        int packed_feat_end = quantized_nodes_feat_range_ptr[i + 1];
+        int packed_feat_len = packed_feat_end - packed_feat_begin;
+
+        const int elems_per_byte = 8 / num_bits;
+        const int mask = ((1 << num_bits) - 1);
+        
+        for (int j = 0; j < packed_feat_len; j++)
+        {
+            const uint8_t packed_val = input_ptr[packed_feat_begin + j];
+            for (int k = 0; k < elems_per_byte && j * elems_per_byte + k < unpacked_feat_len; k++)
+            {
+                const float val = static_cast<float>((packed_val >> ((elems_per_byte - k - 1) * num_bits)) & mask);
+                output_ptr[i * unpacked_feat_len + j * elems_per_byte + k] = val * scale + zero_point;
+            }
+        }
+        
+        // dequantize_kernel_v1_for_4bits(input_ptr + packed_feat_begin, scale, zero_point, packed_feat_len,
+        //                                 unpacked_feat_len, output_ptr + i * unpacked_feat_len);
+        // else if (num_bits == 2)
+        //     dequantize_kernel_v1_for_2bits(input_ptr + packed_feat_begin, scale, zero_point, packed_feat_len,
+        //                                     unpacked_feat_len, output_ptr + i * unpacked_feat_len);
+
+    }
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
+{
     m.def("quantize_tensor", &quantize_tensor);
     m.def("dequantize_tensor", &dequantize_tensor);
+    m.def("quantize_tensor_v1", &quantize_tensor_v1);
+    m.def("dequantize_tensor_v1", &dequantize_tensor_v1);
 }

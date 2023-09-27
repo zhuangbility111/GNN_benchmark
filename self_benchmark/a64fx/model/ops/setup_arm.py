@@ -10,7 +10,7 @@ setup(name='quantization_cpu',
       ext_modules=[
           cpp_extension.CppExtension(
               'quantization_cpu',
-              ['src/quantization.cpp'],
+              ['src/quantization_arm.cpp'],
                 extra_compile_args = compile_extra_args,
                 extra_link_args = link_extra_args
           ),
