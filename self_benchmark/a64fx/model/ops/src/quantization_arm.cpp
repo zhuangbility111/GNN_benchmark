@@ -3,101 +3,204 @@
 #include <stdint.h>
 #include <cmath>
 
+#ifdef __ARM_FEATURE_SVE
+#include <arm_sve.h>
+#define VEC_LEN 16
+#endif /* __ARM_FEATURE_SVE */
+
 using torch::Tensor;
 
-inline int32_t divup(int32_t x, int32_t y) {
-	return (x + y - 1) / y;
+inline int32_t divup(int32_t x, int32_t y)
+{
+    return (x + y - 1) / y;
 }
 
-void divide_work(int* work_range, int total_work, int num_threads) {
-	int chunk_size;
-	int remain_work = total_work;
-	work_range[0] = 0;
-	for (int i = 0; i < num_threads; i++) {
-		chunk_size = divup(remain_work, num_threads - i);
-		work_range[i+1] = work_range[i] + chunk_size;
-		remain_work -= chunk_size;
-	}
-	work_range[num_threads] = total_work;
+#define QUANTIZED_PARAMS_SIZE 2
+
+void divide_work(int *work_range, int total_work, int num_threads)
+{
+    int chunk_size;
+    int remain_work = total_work;
+    work_range[0] = 0;
+    for (int i = 0; i < num_threads; i++)
+    {
+        chunk_size = divup(remain_work, num_threads - i);
+        work_range[i + 1] = work_range[i] + chunk_size;
+        remain_work -= chunk_size;
+    }
+    work_range[num_threads] = total_work;
 }
 
-void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int bits) {
+void quantize_tensor(Tensor input, Tensor output, Tensor quantized_params, int bits)
+{
     int vertex_num = input.size(0);
     int feat_len = input.size(1);
 
     TORCH_CHECK(8 % bits == 0);
 
-    min = min.contiguous();
-    scale = scale.contiguous();
+    quantized_params = quantized_params.contiguous();
+    float *quantized_params_ptr = quantized_params.data_ptr<float>();
 
-    float* input_ptr = input.data_ptr<float>();
-    float* min_ptr = min.data_ptr<float>();
-    float* scale_ptr = scale.data_ptr<float>();
-
+    float *input_ptr = input.data_ptr<float>();
     uint8_t *output_ptr = output.data_ptr<uint8_t>();
 
     int elems_per_byte = 8 / bits;
 
     int max_num_threads = omp_get_max_threads();
     int vertex_num_round = vertex_num + (elems_per_byte - vertex_num % elems_per_byte) % elems_per_byte;
-    int* work_range = new int[max_num_threads+1];
+    int *work_range = new int[max_num_threads + 1];
     divide_work(work_range, vertex_num_round / elems_per_byte, max_num_threads);
 
-    #pragma omp parallel 
-	{
+#pragma omp parallel
+    {
         int tid = omp_get_thread_num();
         int row_begin = work_range[tid] * elems_per_byte;
-        int row_end = std::min(work_range[tid+1] * elems_per_byte, vertex_num);
+        int row_end = std::min(work_range[tid + 1] * elems_per_byte, vertex_num);
 
-		// printf("tid = %d, row_begin = %d, row_end = %d\n", tid, row_begin, row_end);
+        // printf("tid = %d, row_begin = %d, row_end = %d\n", tid, row_begin, row_end);
 
         int num_rows = row_end - row_begin;
 
-        int remainder_num_rows = num_rows % elems_per_byte;
-        int divisible_num_rows = num_rows - remainder_num_rows;
-
-        for (int i = 0; i < divisible_num_rows; i += elems_per_byte) {
-            int row_idx = row_begin + i;
-            for (int j = 0; j < feat_len; j++) {
-                uint8_t packed_val = 0;
-                for (int k = 0; k < elems_per_byte; k++) {
-					// printf("idx in input_dir = %d, idx in min_ptr = %d\n", (row_idx + k) * feat_len + j, row_idx + k);
-                    const int32_t val = 
-                        std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - min_ptr[row_idx + k]) / scale_ptr[row_idx + k]);
-                    packed_val |= (val << ((elems_per_byte-k-1) * bits));
+        for (int i = 0; i < num_rows; i += elems_per_byte)
+        {
+            int remain_num_rows = std::min(elems_per_byte, num_rows - i);
+            for (int j = 0; j < remain_num_rows; j++)
+            {
+                int row_idx = row_begin + i + j;
+                // get max and min of this row
+                float max_val = input_ptr[row_idx * feat_len];
+                float min_val = input_ptr[row_idx * feat_len];
+                for (int k = 1; k < feat_len; k++)
+                {
+                    float val = input_ptr[row_idx * feat_len + k];
+                    max_val = std::max(max_val, val);
+                    min_val = std::min(min_val, val);
                 }
-				// printf("idx in out = %d\n", row_idx / elems_per_byte * feat_len + j);
-                output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
+
+                float zero_point = min_val;
+                float scale = (max_val - zero_point) / ((1 << bits) - 1);
+                if (scale == 0)
+                    scale = 1.0f;
+
+                quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE] = zero_point;
+                quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE + 1] = scale;
+            }
+
+            int row_idx = row_begin + i;
+            for (int j = 0; j < feat_len; j += VEC_LEN)
+            {
+                svbool_t pg_f32 = svwhilelt_b32(j, feat_len);
+                svuint32_t v_res = svdup_n_u32(0);
+
+                for (int k = 0; k < remain_num_rows; k++)
+                {
+                    svfloat32_t v_input = svld1(pg_f32, input_ptr + (row_idx + k) * feat_len + j);
+                    svfloat32_t v_zero_point = svdup_f32(quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE]);
+                    svfloat32_t v_scale = svdup_n_f32(quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1]);
+                    svuint32_t v_quantized = svcvt_u32_f32_z(pg_f32, svrintn_f32_z(pg_f32, svdiv_f32_z(pg_f32, svsub_f32_z(pg_f32, v_input, v_zero_point), v_scale)));
+                    v_quantized = svlsl_n_u32_z(pg_f32, v_quantized, (elems_per_byte - k - 1) * bits);
+                    v_res = svorr_z(pg_f32, v_res, v_quantized);
+                }
+
+                svst1b_u32(pg_f32, output_ptr + row_idx / elems_per_byte * feat_len + j, v_res);
             }
         }
 
-		if (remainder_num_rows > 0) {
-        	for (int j = 0; j < feat_len; j++) {
-        	    const int row_idx = row_begin + divisible_num_rows;
-        	    uint8_t packed_val = 0;
-        	    for (int k = 0; k < remainder_num_rows; k++) {
-					// printf("k = %d, remainder_num_rows = %d, remider.\n", k, remainder_num_rows);
-        	        const int32_t val = 
-        	            std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - min_ptr[row_idx + k]) / scale_ptr[row_idx + k]);
-        	        packed_val |= (val << ((elems_per_byte-k-1) * bits));
-        	    }
-        	    output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
-        	}
-		}
+        // int remainder_num_rows = num_rows % elems_per_byte;
+        // int divisible_num_rows = num_rows - remainder_num_rows;
+        // for (int i = 0; i < divisible_num_rows; i += elems_per_byte)
+        // {
+        //     // get zero point and scale for each row
+        //     for (int j = i; j < i + elems_per_byte; j++)
+        //     {
+        //         int row_idx = row_begin + j;
+        //         // get max and min of this row
+        //         float max_val = input_ptr[row_idx * feat_len];
+        //         float min_val = input_ptr[row_idx * feat_len];
+        //         for (int k = 1; k < feat_len; k++)
+        //         {
+        //             float val = input_ptr[row_idx * feat_len + k];
+        //             max_val = std::max(max_val, val);
+        //             min_val = std::min(min_val, val);
+        //         }
+
+        //         float zero_point = min_val;
+        //         float scale = (max_val - zero_point) / ((1 << bits) - 1);
+        //         if (scale == 0)
+        //             scale = 1.0f;
+
+        //         quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE] = zero_point;
+        //         quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE + 1] = scale;
+        //     }
+
+        //     // quantize each row
+        //     int row_idx = row_begin + i;
+        //     for (int j = 0; j < feat_len; j++)
+        //     {
+        //         uint8_t packed_val = 0;
+        //         for (int k = 0; k < elems_per_byte; k++)
+        //         {
+        //             const int32_t val =
+        //                 // std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE]) / quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1]);
+        //                 lrintf((input_ptr[(row_idx + k) * feat_len + j] - quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE]) / quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1]);
+        //             packed_val |= (val << ((elems_per_byte - k - 1) * bits));
+        //         }
+        //         // printf("idx in out = %d, packed_val = %u\n", row_idx / elems_per_byte * feat_len + j, packed_val);
+        //         output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
+        //     }
+        // }
+
+        // if (remainder_num_rows > 0)
+        // {
+        //     // get zero point and scale for each row
+        //     for (int j = divisible_num_rows; j < divisible_num_rows + remainder_num_rows; j++)
+        //     {
+        //         int row_idx = row_begin + j;
+        //         // get max and min of this row
+        //         float max_val = input_ptr[row_idx * feat_len];
+        //         float min_val = input_ptr[row_idx * feat_len];
+        //         for (int k = 1; k < feat_len; k++)
+        //         {
+        //             float val = input_ptr[row_idx * feat_len + k];
+        //             max_val = std::max(max_val, val);
+        //             min_val = std::min(min_val, val);
+        //         }
+
+        //         float zero_point = min_val;
+        //         float scale = (max_val - zero_point) / ((1 << bits) - 1);
+        //         if (scale == 0)
+        //             scale = 1.0f;
+
+        //         quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE] = zero_point;
+        //         quantized_params_ptr[row_idx * QUANTIZED_PARAMS_SIZE + 1] = scale;
+        //     }
+
+        //     for (int j = 0; j < feat_len; j++)
+        //     {
+        //         const int row_idx = row_begin + divisible_num_rows;
+        //         uint8_t packed_val = 0;
+        //         for (int k = 0; k < remainder_num_rows; k++)
+        //         {
+        //             // printf("k = %d, remainder_num_rows = %d, remider.\n", k, remainder_num_rows);
+        //             const int32_t val =
+        //                 // std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE]) / quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1]);
+        //                 lrintf((input_ptr[(row_idx + k) * feat_len + j] - quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE]) / quantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1]);
+        //             packed_val |= (val << ((elems_per_byte - k - 1) * bits));
+        //         }
+        //         output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
+        //     }
+        // }
     }
 
-    delete [] work_range;
+    delete[] work_range;
 }
 
-void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int bits) {
+void dequantize_tensor(Tensor input, Tensor output, Tensor dequantized_params, int bits)
+{
     TORCH_CHECK(8 % bits == 0);
 
-    min = min.contiguous();
-    scale = scale.contiguous();
-
-    uint8_t* input_ptr = input.data_ptr<uint8_t>();
-    float* min_ptr = min.data_ptr<float>();
-    float* scale_ptr = scale.data_ptr<float>();
+    uint8_t *input_ptr = input.data_ptr<uint8_t>();
+    float *dequantized_params_ptr = dequantized_params.data_ptr<float>();
     float *output_ptr = output.data_ptr<float>();
 
     int vertex_num = output.size(0);
@@ -108,46 +211,50 @@ void dequantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, in
     int elems_per_byte = 8 / bits;
     int max_num_threads = omp_get_max_threads();
     int vertex_num_round = vertex_num + (elems_per_byte - vertex_num % elems_per_byte) % elems_per_byte;
-    int* work_range = new int[max_num_threads+1];
+    int *work_range = new int[max_num_threads + 1];
     divide_work(work_range, vertex_num_round / elems_per_byte, max_num_threads);
 
-    #pragma omp parallel 
-	{
+#pragma omp parallel
+    {
         int tid = omp_get_thread_num();
         int row_begin = work_range[tid] * elems_per_byte;
-        int row_end = std::min(work_range[tid+1] * elems_per_byte, vertex_num);
+        int row_end = std::min(work_range[tid + 1] * elems_per_byte, vertex_num);
 
         int num_rows = row_end - row_begin;
 
         int remainder_num_rows = num_rows % elems_per_byte;
         int divisible_num_rows = num_rows - remainder_num_rows;
 
-        for (int i = 0; i < divisible_num_rows; i += elems_per_byte) {
+        for (int i = 0; i < divisible_num_rows; i += elems_per_byte)
+        {
             const int row_idx = row_begin + i;
-            for (int j = 0; j < feat_len; j++) {
+            for (int j = 0; j < feat_len; j++)
+            {
                 const uint8_t packed_val = input_ptr[row_idx / elems_per_byte * feat_len + j];
-                for (int k = 0; k < elems_per_byte; k++) {
-                    const float val = static_cast<float>((packed_val >> ((elems_per_byte-k-1) * bits)) & mask);
-                    output_ptr[(row_idx + k) * feat_len + j] = val * scale_ptr[row_idx + k] + min_ptr[row_idx + k];
+                for (int k = 0; k < elems_per_byte; k++)
+                {
+                    const float val = static_cast<float>((packed_val >> ((elems_per_byte - k - 1) * bits)) & mask);
+                    output_ptr[(row_idx + k) * feat_len + j] = val * dequantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1] + dequantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE];
                 }
             }
         }
 
-		if (remainder_num_rows > 0) {
-        	for (int j = 0; j < feat_len; j++) {
-        	    const int row_idx = row_begin + divisible_num_rows;
-        	    const uint8_t packed_val = input_ptr[row_idx / elems_per_byte * feat_len + j];
-        	    for (int k =0; k < remainder_num_rows; k++) {
-        	        const float val = static_cast<float>((packed_val >> ((elems_per_byte-k-1) * bits)) & mask);
-        	        output_ptr[(row_idx + k) * feat_len + j] = val * scale_ptr[row_idx + k] + min_ptr[row_idx + k];
-        	    }
-        	}
-    	}
+        if (remainder_num_rows > 0)
+        {
+            for (int j = 0; j < feat_len; j++)
+            {
+                const int row_idx = row_begin + divisible_num_rows;
+                const uint8_t packed_val = input_ptr[row_idx / elems_per_byte * feat_len + j];
+                for (int k = 0; k < remainder_num_rows; k++)
+                {
+                    const float val = static_cast<float>((packed_val >> ((elems_per_byte - k - 1) * bits)) & mask);
+                    output_ptr[(row_idx + k) * feat_len + j] = val * dequantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE + 1] + dequantized_params_ptr[(row_idx + k) * QUANTIZED_PARAMS_SIZE];
+                }
+            }
+        }
+    }
 
-
-	}
-
-    delete [] work_range;
+    delete[] work_range;
 }
 
 void quantize_tensor_v1(Tensor input, Tensor output,
@@ -253,7 +360,7 @@ void dequantize_tensor_v1(Tensor input, Tensor output,
 
         const int elems_per_byte = 8 / num_bits;
         const int mask = ((1 << num_bits) - 1);
-        
+
         for (int j = 0; j < packed_feat_len; j++)
         {
             const uint8_t packed_val = input_ptr[packed_feat_begin + j];
@@ -263,13 +370,12 @@ void dequantize_tensor_v1(Tensor input, Tensor output,
                 output_ptr[i * unpacked_feat_len + j * elems_per_byte + k] = val * scale + zero_point;
             }
         }
-        
+
         // dequantize_kernel_v1_for_4bits(input_ptr + packed_feat_begin, scale, zero_point, packed_feat_len,
         //                                 unpacked_feat_len, output_ptr + i * unpacked_feat_len);
         // else if (num_bits == 2)
         //     dequantize_kernel_v1_for_2bits(input_ptr + packed_feat_begin, scale, zero_point, packed_feat_len,
         //                                     unpacked_feat_len, output_ptr + i * unpacked_feat_len);
-
     }
 }
 
