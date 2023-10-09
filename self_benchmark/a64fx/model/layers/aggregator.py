@@ -9,7 +9,7 @@ sys.path.append("../../")
 from communicator import Communicator
 from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer_v1
+from quantizer import Quantizer, Quantizer_v1
 
 import quantization_cpu
 import math
@@ -47,6 +47,7 @@ class Aggregator(torch.autograd.Function):
         recv_buf_fp16 = graph.comm_buf.recv_buf_fp16
 
         comm_begin = time.perf_counter()
+        TimeRecorder.print_time(rank, "prepare comm data (ms): ", (comm_begin - prepare_comm_begin) * 1000.0)
         comm_handle = None
 
         # zero the send buffer
@@ -90,9 +91,28 @@ class Aggregator(torch.autograd.Function):
         convert_data_begin = time.perf_counter()
         # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16 and is_training:
-            Quantizer_v1.dequantize_intX_to_fp32(
-                quantized_recv_buf, recv_buf, dequantized_nodes_feat_range, dequantized_params
-            )
+            if num_bits == 2 or num_bits == 4 or num_bits == 8:
+                begin_idx = 0
+                end_idx = 0
+                quantized_begin_idx = 0
+                quantized_end_idx = 0
+                for i in range(world_size):
+                    begin_idx = end_idx
+                    end_idx += recv_splits[i]
+
+                    quantized_begin_idx = quantized_end_idx
+                    quantized_end_idx += dequantized_nodes_feat_range[i]
+
+                    Quantizer.dequantize_intX_to_fp32(
+                        quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
+                        recv_buf[begin_idx: end_idx], 
+                        dequantized_params[begin_idx: end_idx],
+                        num_bits
+                    )
+            else:
+                Quantizer_v1.dequantize_intX_to_fp32(
+                    quantized_recv_buf, recv_buf, dequantized_nodes_feat_range, dequantized_params
+                )
 
         convert_data_end = time.perf_counter()
         # print_time(rank, "inner convert data (ms): ", (convert_data_end - convert_data_begin) * 1000.0)
@@ -108,9 +128,11 @@ class Aggregator(torch.autograd.Function):
 
         sum_message_end = time.perf_counter()
 
+        print("rank:{}, aggregate local nodes (ms): {}".format(rank, (remote_aggregate_begin - local_aggregate_begin) * 1000.0))
         TimeRecorder.print_time(
             rank, "inner propagate forward (ms): ", (sum_message_end - prepare_comm_begin) * 1000.0
         )
+        TimeRecorder.ctx.record_dequantization_time(convert_data_end - convert_data_begin)
         TimeRecorder.ctx.record_total_convolution_time(sum_message_end - prepare_comm_begin)
         TimeRecorder.ctx.next_layer()
         # print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
@@ -190,14 +212,35 @@ class Aggregator(torch.autograd.Function):
         if comm_handle is not None:
             comm_handle.wait()
 
+        dequantization_begin = time.perf_counter()
         # convert communication data to fp32
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16:
-            Quantizer_v1.dequantize_intX_to_fp32(
-                quantized_recv_buf,
-                recv_buf,
-                dequantized_nodes_grad_range,
-                dequantized_params,
-            )
+            if num_bits == 2 or num_bits == 4 or num_bits == 8:
+                begin_idx = 0
+                end_idx = 0
+                quantized_begin_idx = 0
+                quantized_end_idx = 0
+                for i in range(world_size):
+                    begin_idx = end_idx
+                    end_idx += recv_splits[i]
+
+                    quantized_begin_idx = quantized_end_idx
+                    quantized_end_idx += dequantized_nodes_grad_range[i]
+
+                    Quantizer.dequantize_intX_to_fp32(
+                        quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
+                        recv_buf[begin_idx: end_idx], 
+                        dequantized_params[begin_idx: end_idx],
+                        num_bits
+                    )
+            else:
+                Quantizer_v1.dequantize_intX_to_fp32(
+                    quantized_recv_buf,
+                    recv_buf,
+                    dequantized_nodes_grad_range,
+                    dequantized_params,
+                )
+        dequantization_end = time.perf_counter()
 
         index_add_begin = time.perf_counter()
         # then accumulate the local node grads
@@ -211,6 +254,7 @@ class Aggregator(torch.autograd.Function):
 
         index_add_end = time.perf_counter()
         backward_end = time.perf_counter()
+        TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)
         TimeRecorder.ctx.record_total_convolution_time(backward_end - backward_begin)
         TimeRecorder.ctx.next_layer()
 
