@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer, Quantizer_v1
+from quantizer import Quantizer, Quantizer_v1, Quantizer_for_all_procs
 
 
 def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
@@ -20,6 +20,12 @@ class Communicator(object):
         self.is_async = is_async
         self.world_size = -1
         self.rank = -1
+
+        self.quantized_send_splits_forward = None
+        self.quantized_recv_splits_forward = None
+        self.quantized_send_splits_backward = None
+        self.quantized_recv_splits_backward = None
+
         Communicator.ctx = self
 
     def init_dist_group(self):
@@ -48,7 +54,7 @@ class Communicator(object):
         return (self.rank, self.world_size)
 
     def comm(
-        self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, layer, is_training
+        self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, layer, is_training, direction
     ):
         quantized_buf = None
         dequantized_nodes_feat_range = None
@@ -61,10 +67,10 @@ class Communicator(object):
                 recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits
             )
         elif self.num_bits == 2 or self.num_bits == 4 or self.num_bits == 8:
-            print("go to pure communication with quantization")
-            comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params = self.comm_with_pure_quantization(
-                recv_buf, send_buf, recv_splits, send_splits
-            )
+            # comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params = self.comm_with_pure_quantization(
+            #     recv_buf, send_buf, recv_splits, send_splits
+            # )
+            comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params = self.comm_with_pure_quantization_for_all_procs(recv_buf, send_buf, recv_splits, send_splits, direction)
         else:
             nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(layer)
             (
@@ -124,8 +130,8 @@ class Communicator(object):
         send_splits,
     ):
         # send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
-        quantize_begin = time.perf_counter()
 
+        prepare_params_begin = time.perf_counter()
         quantized_recv_splits = list()
         quantized_send_splits = list()
 
@@ -142,7 +148,9 @@ class Communicator(object):
 
         quantized_recv_params_buf = torch.empty((sum(recv_splits), 2), dtype=torch.float32)
         quantized_send_params_buf = torch.empty((sum(send_splits), 2), dtype=torch.float32)
+        prepare_params_end = time.perf_counter()
         
+        quantize_begin = time.perf_counter()
         send_begin_idx = 0
         send_end_idx = 0
         quantized_send_begin_idx = 0
@@ -170,7 +178,7 @@ class Communicator(object):
         # TimeRecorder.print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
 
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
         # print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
         # comm for quantized params (scale and zero_point)
@@ -189,15 +197,120 @@ class Communicator(object):
         TimeRecorder.ctx.record_quantization_time(quantize_end - quantize_begin)
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_communication_time(comm_data_end - comm_param_begin)
-        print("rank:{}, send_buf shape: {}".format(rank, send_buf.shape), flush=True)
-        print("rank:{}, recv_buf shape (ms): {}".format(rank, recv_buf.shape), flush=True)
+        # print("rank:{}, send_buf shape: {}".format(rank, send_buf.shape), flush=True)
+        # print("rank:{}, recv_buf shape (ms): {}".format(rank, recv_buf.shape), flush=True)
+        print("rank:{}, prepare params (ms): {}".format(rank, (prepare_params_end - prepare_params_begin) * 1000.0), flush=True)
         print("rank:{}, quantization (ms): {}".format(rank, (quantize_end - quantize_begin) * 1000.0), flush=True)
-        print("rank:{}, barrier (ms): {}".format(rank, (barrier_end - barrier_begin) * 1000.0), flush=True)
+        # print("rank:{}, barrier (ms): {}".format(rank, (barrier_end - barrier_begin) * 1000.0), flush=True)
         print("rank:{}, comm for param (ms): {}".format(rank, (comm_param_end - comm_param_begin) * 1000.0), flush=True)
         print("rank:{}, comm for data (ms): {}".format(rank, (comm_data_end - comm_data_begin) * 1000.0), flush=True)
 
 
         return comm_handle, quantized_recv_data_buf, quantized_recv_splits, quantized_recv_params_buf
+
+    def set_quantized_splits(self, direction, recv_splits, send_splits):
+        quantized_recv_splits = list()
+        quantized_send_splits = list()
+        for rank in range(self.world_size):
+            # prepare the quantized buffer for communication
+            int8_recv_buf_size = Quantizer_for_all_procs.ctx.get_quantized_splits(recv_splits[rank])
+            int8_send_buf_size = Quantizer_for_all_procs.ctx.get_quantized_splits(send_splits[rank])
+            quantized_recv_splits.append(int8_recv_buf_size)
+            quantized_send_splits.append(int8_send_buf_size)
+
+        if direction == "forward":
+            self.quantized_recv_splits_forward = quantized_recv_splits
+            self.quantized_send_splits_forward = quantized_send_splits
+        else:
+            self.quantized_recv_splits_backward = quantized_recv_splits
+            self.quantized_send_splits_backward = quantized_send_splits
+
+    def comm_with_pure_quantization_for_all_procs(
+        self,
+        recv_buf,
+        send_buf,
+        recv_splits,
+        send_splits,
+        direction,
+    ):
+        # send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
+
+        prepare_params_begin = time.perf_counter()
+
+        if direction == "forward":
+            quantized_recv_splits = self.quantized_recv_splits_forward
+            quantized_send_splits = self.quantized_send_splits_forward
+
+            if quantized_recv_splits is None or quantized_send_splits is None:
+                self.set_quantized_splits(direction, recv_splits, send_splits)
+                quantized_recv_splits = self.quantized_recv_splits_forward
+                quantized_send_splits = self.quantized_send_splits_forward
+        elif direction == "backward":
+            quantized_recv_splits = self.quantized_recv_splits_backward
+            quantized_send_splits = self.quantized_send_splits_backward
+
+            if quantized_recv_splits is None or quantized_send_splits is None:
+                self.set_quantized_splits(direction, recv_splits, send_splits)
+                quantized_recv_splits = self.quantized_recv_splits_backward
+                quantized_send_splits = self.quantized_send_splits_backward
+        else:
+            print("direction is wrong!")
+        
+        
+        quantized_recv_data_buf = torch.empty((sum(quantized_recv_splits), recv_buf.size(-1)), dtype=torch.uint8)
+        quantized_send_data_buf = torch.empty((sum(quantized_send_splits), send_buf.size(-1)), dtype=torch.uint8)
+
+        quantized_recv_params_buf = torch.empty((sum(recv_splits), 2), dtype=torch.bfloat16)
+        quantized_send_params_buf = torch.empty((sum(send_splits), 2), dtype=torch.float32)
+
+        quantized_work_range_per_proc = torch.empty((len(send_splits) + 1), dtype=torch.int32)
+        quantized_work_range_per_proc[0] = 0
+        quantized_work_range_per_proc[1:] = torch.tensor(send_splits, dtype=torch.int32).cumsum(0)
+
+        prepare_params_end = time.perf_counter()
+        
+        quantize_begin = time.perf_counter()
+        Quantizer_for_all_procs.ctx.quantize_fp32_to_intX(send_buf, quantized_send_data_buf, quantized_send_params_buf, quantized_work_range_per_proc)
+
+        rank = dist.get_rank()
+        quantize_end = time.perf_counter()
+        # print_time(rank, "outer quantize data(ms): ", (quantize_end - quantize_begin) * 1000.0)
+        # TimeRecorder.print_time(rank, "outer quantize data (ms): ", (quantize_end - quantize_begin) * 1000.0)
+
+        barrier_begin = time.perf_counter()
+        dist.barrier()
+        barrier_end = time.perf_counter()
+        # print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
+        # comm for quantized params (scale and zero_point)
+        comm_param_begin = time.perf_counter()
+        quantized_send_params_buf = quantized_send_params_buf.to(torch.bfloat16)
+        dist.all_to_all_single(quantized_recv_params_buf, quantized_send_params_buf, recv_splits, send_splits, async_op=False)
+        quantized_recv_params_buf = quantized_recv_params_buf.to(torch.float32)
+        comm_param_end = time.perf_counter()
+        comm_data_begin = time.perf_counter()
+        # comm_handle = None
+        # dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
+        # print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
+        # comm for quantized data
+        # comm_handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
+        comm_handle = dist.all_to_all_single(quantized_recv_data_buf, quantized_send_data_buf, quantized_recv_splits, quantized_send_splits, async_op=self.is_async)
+        comm_data_end = time.perf_counter()
+
+        TimeRecorder.ctx.record_quantization_time(quantize_end - quantize_begin)
+        TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
+        TimeRecorder.ctx.record_communication_time(comm_data_end - comm_param_begin)
+        # print("rank:{}, send_buf shape: {}".format(rank, send_buf.shape), flush=True)
+        # print("rank:{}, recv_buf shape (ms): {}".format(rank, recv_buf.shape), flush=True)
+        print("rank:{}, prepare params (ms): {}".format(rank, (prepare_params_end - prepare_params_begin) * 1000.0))
+        print("rank:{}, quantization (ms): {}".format(rank, (quantize_end - quantize_begin) * 1000.0))
+        print("rank:{}, barrier (ms): {}".format(rank, (barrier_end - barrier_begin) * 1000.0), flush=True)
+        print("rank:{}, comm for param (ms): {}".format(rank, (comm_param_end - comm_param_begin) * 1000.0))
+        print("rank:{}, comm for data (ms): {}".format(rank, (comm_data_end - comm_data_begin) * 1000.0), flush=True)
+
+
+        return comm_handle, quantized_recv_data_buf, quantized_recv_splits, quantized_recv_params_buf
+
+        
 
     def get_splits_for_comm_quantized_data(
         self,
@@ -286,7 +399,7 @@ class Communicator(object):
         quantization_end = time.perf_counter()
 
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
         barrier_end = time.perf_counter()
 
         # comm_for_param_begin = time.perf_counter()
@@ -338,9 +451,9 @@ class Communicator(object):
         # TimeRecorder.print_time(
         #     dist.get_rank(), "inner quantization (ms): ", (quantization_end - quantization_begin) * 1000.0
         # )
-        TimeRecorder.print_time(
-            dist.get_rank(), "inner barrier (ms): ", (barrier_end - barrier_begin) * 1000.0
-        )
+        # TimeRecorder.print_time(
+        #     dist.get_rank(), "inner barrier (ms): ", (barrier_end - barrier_begin) * 1000.0
+        # )
         # TimeRecorder.print_time(
         #     dist.get_rank(), "inner comm for data (ms): ", (comm_for_data_end - comm_for_data_begin) * 1000.0
         # )

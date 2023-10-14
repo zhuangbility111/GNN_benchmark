@@ -74,3 +74,22 @@ class Quantizer_v1(object):
         quantized_nodes_feat_range[0] = 0
         torch.cumsum(quantized_nodes_feat_len, dim=0, out=quantized_nodes_feat_range[1:])
         return quantized_nodes_feat_range
+
+class Quantizer_for_all_procs(object):
+    def __init__(self, world_size, num_bits) -> None:
+        self.num_bits = num_bits
+        self.world_size = world_size
+        Quantizer_for_all_procs.ctx = self
+
+    def quantize_fp32_to_intX(self, data_fp32, data_int8, quantized_params, quantized_work_range_per_proc):
+        quantization_cpu.quantize_tensor_for_all_procs(data_fp32, data_int8, quantized_params, 
+                                                       quantized_work_range_per_proc, 
+                                                       self.world_size, self.num_bits)
+
+    def dequantize_intX_to_fp32(self, data_int8, data_fp32, quantized_params, dequantized_work_range_per_proc):
+        quantization_cpu.dequantize_tensor_for_all_procs(data_int8, data_fp32, quantized_params, 
+                                                         dequantized_work_range_per_proc, 
+                                                         self.world_size, self.num_bits)
+    
+    def get_quantized_splits(self, num_comm_nodes):
+        return math.ceil(num_comm_nodes / float(8 / self.num_bits))

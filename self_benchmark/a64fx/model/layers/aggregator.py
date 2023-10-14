@@ -9,7 +9,7 @@ sys.path.append("../../")
 from communicator import Communicator
 from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer, Quantizer_v1
+from quantizer import Quantizer, Quantizer_v1, Quantizer_for_all_procs
 
 import quantization_cpu
 import math
@@ -74,6 +74,7 @@ class Aggregator(torch.autograd.Function):
                 send_splits,
                 layer,
                 is_training,
+                "forward"
             )
 
         comm_end = time.perf_counter()
@@ -92,23 +93,27 @@ class Aggregator(torch.autograd.Function):
         # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16 and is_training:
             if num_bits == 2 or num_bits == 4 or num_bits == 8:
-                begin_idx = 0
-                end_idx = 0
-                quantized_begin_idx = 0
-                quantized_end_idx = 0
-                for i in range(world_size):
-                    begin_idx = end_idx
-                    end_idx += recv_splits[i]
+                # begin_idx = 0
+                # end_idx = 0
+                # quantized_begin_idx = 0
+                # quantized_end_idx = 0
+                # for i in range(world_size):
+                #     begin_idx = end_idx
+                #     end_idx += recv_splits[i]
 
-                    quantized_begin_idx = quantized_end_idx
-                    quantized_end_idx += dequantized_nodes_feat_range[i]
+                #     quantized_begin_idx = quantized_end_idx
+                #     quantized_end_idx += dequantized_nodes_feat_range[i]
 
-                    Quantizer.dequantize_intX_to_fp32(
-                        quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
-                        recv_buf[begin_idx: end_idx], 
-                        dequantized_params[begin_idx: end_idx],
-                        num_bits
-                    )
+                #     Quantizer.dequantize_intX_to_fp32(
+                #         quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
+                #         recv_buf[begin_idx: end_idx], 
+                #         dequantized_params[begin_idx: end_idx],
+                #         num_bits
+                #     )
+                dequantized_work_range_per_proc = torch.empty((len(recv_splits) + 1), dtype=torch.int32)
+                dequantized_work_range_per_proc[0] = 0
+                dequantized_work_range_per_proc[1:] = torch.tensor(recv_splits, dtype=torch.int32).cumsum(0)
+                Quantizer_for_all_procs.ctx.dequantize_intX_to_fp32(quantized_recv_buf, recv_buf, dequantized_params, dequantized_work_range_per_proc)
             else:
                 Quantizer_v1.dequantize_intX_to_fp32(
                     quantized_recv_buf, recv_buf, dequantized_nodes_feat_range, dequantized_params
@@ -201,6 +206,7 @@ class Aggregator(torch.autograd.Function):
                 send_splits,
                 layer,
                 True,
+                "backward"
             )
 
         # scatter gradient to local nodes
@@ -216,23 +222,28 @@ class Aggregator(torch.autograd.Function):
         # convert communication data to fp32
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16:
             if num_bits == 2 or num_bits == 4 or num_bits == 8:
-                begin_idx = 0
-                end_idx = 0
-                quantized_begin_idx = 0
-                quantized_end_idx = 0
-                for i in range(world_size):
-                    begin_idx = end_idx
-                    end_idx += recv_splits[i]
+                # begin_idx = 0
+                # end_idx = 0
+                # quantized_begin_idx = 0
+                # quantized_end_idx = 0
+                # for i in range(world_size):
+                #     begin_idx = end_idx
+                #     end_idx += recv_splits[i]
 
-                    quantized_begin_idx = quantized_end_idx
-                    quantized_end_idx += dequantized_nodes_grad_range[i]
+                #     quantized_begin_idx = quantized_end_idx
+                #     quantized_end_idx += dequantized_nodes_grad_range[i]
 
-                    Quantizer.dequantize_intX_to_fp32(
-                        quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
-                        recv_buf[begin_idx: end_idx], 
-                        dequantized_params[begin_idx: end_idx],
-                        num_bits
-                    )
+                #     Quantizer.dequantize_intX_to_fp32(
+                #         quantized_recv_buf[quantized_begin_idx: quantized_end_idx], 
+                #         recv_buf[begin_idx: end_idx], 
+                #         dequantized_params[begin_idx: end_idx],
+                #         num_bits
+                #     )
+
+                dequantized_work_range_per_proc = torch.empty((len(recv_splits) + 1), dtype=torch.int32)
+                dequantized_work_range_per_proc[0] = 0
+                dequantized_work_range_per_proc[1:] = torch.tensor(recv_splits, dtype=torch.int32).cumsum(0)
+                Quantizer_for_all_procs.ctx.dequantize_intX_to_fp32(quantized_recv_buf, recv_buf, dequantized_params, dequantized_work_range_per_proc)
             else:
                 Quantizer_v1.dequantize_intX_to_fp32(
                     quantized_recv_buf,
@@ -242,7 +253,6 @@ class Aggregator(torch.autograd.Function):
                 )
         dequantization_end = time.perf_counter()
 
-        index_add_begin = time.perf_counter()
         # then accumulate the local node grads
         if local_nodes_grad_buf.size(0) != 0:
             if is_pre_delay:  # post aggregation
@@ -252,7 +262,6 @@ class Aggregator(torch.autograd.Function):
                     dim=0, index=graph.idx_nodes_send_to_others, source=local_nodes_grad_buf
                 )
 
-        index_add_end = time.perf_counter()
         backward_end = time.perf_counter()
         TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)
         TimeRecorder.ctx.record_total_convolution_time(backward_end - backward_begin)

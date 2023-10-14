@@ -13,6 +13,8 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 from time_recorder import TimeRecorder
 
+from quantizer import Quantizer_for_all_procs
+
 
 def collect_acc(model, data):
     # check accuracy
@@ -142,6 +144,8 @@ if __name__ == "__main__":
         data["graph"].comm_buf.send_buf.size(0),
         data["graph"].comm_buf.recv_buf.size(0),
     )
+
+    Quantizer_for_all_procs(world_size, config["num_bits"])
 
     TimeRecorder(config["num_layers"], config["num_epochs"])
 
