@@ -28,7 +28,8 @@ def collect_acc(model, data):
         predict_result.append(num_correct_samples)
         predict_result.append(num_samples)
     predict_result = torch.tensor(predict_result)
-    dist.all_reduce(predict_result, op=dist.ReduceOp.SUM)
+    if dist.get_world_size() > 1:
+        dist.all_reduce(predict_result, op=dist.ReduceOp.SUM)
 
     train_acc = float(predict_result[0] / predict_result[1])
     val_acc = float(predict_result[2] / predict_result[3])
@@ -117,7 +118,7 @@ if __name__ == "__main__":
     config["num_bits"] = args.num_bits
     config["is_pre_delay"] = True if args.is_pre_delay == "true" else False
 
-    print(config, flush=True)
+    # print(config, flush=True)
 
     Communicator(config["num_bits"], config["is_async"])
     rank, world_size = Communicator.ctx.init_dist_group()
