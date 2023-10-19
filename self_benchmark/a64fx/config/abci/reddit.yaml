@@ -1,4 +1,5 @@
-input_dir : "../../dataset/reddit/balanced_training_samples/"
+# input_dir : "../../dataset/reddit/balanced_training_samples/"
+input_dir : "../../dataset/reddit/balanced_out_degree/"
 graph_name : "reddit"
 model_name : "sage"
 in_channels : 602
