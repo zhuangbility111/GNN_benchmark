@@ -1,0 +1,15 @@
+# input_dir : "../../dataset/uk-2007-02/balanced_training_samples/"
+input_dir: "../../../dataset/uk-2007-02/weak_scaling/"
+graph_name: "uk-2007-02"
+model_name: "sage"
+in_channels: 128
+hidden_channels: 256
+out_channels: 256
+num_layers: 3
+dropout: 0.5
+lr: 0.01
+weight_decay: 0.0
+num_epochs: 100
+random_seed: 0
+is_async: false
+assign_period: 50

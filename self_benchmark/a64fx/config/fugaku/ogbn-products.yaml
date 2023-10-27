@@ -1,12 +1,15 @@
-input_dir : "./dataset/ogbn_products_new/"
-graph_name : "products"
-model_name : "sage"
-in_channels : 100
-hidden_channels : 256
-out_channels : 47
-num_layers : 3
-dropout : 0.5
-lr : 0.01
-weight_decay : 0.0
-num_epochs : 10
-random_seed : 0
+# input_dir: "../../../dataset/ogbn_products_new/balanced_training_samples/"
+input_dir: "../../../dataset/ogbn_products_new/balanced_out_degree/"
+graph_name: "products"
+model_name: "sage"
+in_channels: 100
+hidden_channels: 256
+out_channels: 47
+num_layers: 3
+dropout: 0.5
+lr: 0.01
+weight_decay: 0.0
+num_epochs: 250
+random_seed: 0
+is_async: false
+assign_period: 50

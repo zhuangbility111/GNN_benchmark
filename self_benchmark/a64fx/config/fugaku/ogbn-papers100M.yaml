@@ -1,0 +1,15 @@
+# input_dir: "../../../dataset/ogbn_papers100M_new/balanced_training_samples/"
+input_dir: "../../../dataset/ogbn_papers100M_new/balanced_out_degree/"
+graph_name: "papers100M"
+model_name: "sage"
+in_channels: 128
+hidden_channels: 128
+out_channels: 172
+num_layers: 3
+dropout: 0.5
+lr: 0.01
+weight_decay: 0.0
+num_epochs: 100
+random_seed: 0
+is_async: false
+assign_period: 50

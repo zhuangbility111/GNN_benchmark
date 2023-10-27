@@ -1,0 +1,15 @@
+# input_dir: "../../../dataset/reddit/balanced_training_samples/"
+input_dir: "../../../dataset/reddit/balanced_out_degree/"
+graph_name: "reddit"
+model_name: "sage"
+in_channels: 602
+hidden_channels: 256
+out_channels: 41
+num_layers: 3
+dropout: 0.5
+lr: 0.01
+weight_decay: 0.0
+num_epochs: 250
+random_seed: 0
+is_async: false
+assign_period: 50
