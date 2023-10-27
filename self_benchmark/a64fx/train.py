@@ -76,6 +76,7 @@ def train(model, data, optimizer, num_epochs, num_bits):
     total_training_dur = 0
 
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
+    dist.barrier()
     for epoch in range(num_epochs):
         model.train()
         forward_start = time.perf_counter()
@@ -100,10 +101,10 @@ def train(model, data, optimizer, num_epochs, num_bits):
             print(
                 f"Rank: {rank}, World_size: {world_size}, Epoch: {epoch}, Loss: {loss}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}, Time: {(update_weight_end - forward_start):.6f}"
             )
+        TimeRecorder.ctx.record_total_training_time(update_weight_end - forward_start)
         TimeRecorder.ctx.next_epoch()
 
     print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -154,16 +155,33 @@ if __name__ == "__main__":
     total_quantization_time = torch.tensor([TimeRecorder.ctx.get_total_quantization_time()])
     total_communication_time = torch.tensor([TimeRecorder.ctx.get_total_communication_time()])
     total_dequantization_time = torch.tensor([TimeRecorder.ctx.get_total_dequantization_time()])
+    total_prepare_comm_time = torch.tensor([TimeRecorder.ctx.get_total_prepare_comm_time()])
+    total_pre_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_pre_aggregate_time()])
+    total_local_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_local_aggregate_time()])
+    total_remote_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_remote_aggregate_time()])
     total_convolution_time = torch.tensor([TimeRecorder.ctx.get_total_convolution_time()])
+    total_training_time = torch.tensor([TimeRecorder.ctx.get_total_training_time()])
     dist.reduce(total_barrier_time, 0, op=dist.ReduceOp.SUM)
     dist.reduce(total_quantization_time, 0, op=dist.ReduceOp.SUM)
     dist.reduce(total_communication_time, 0, op=dist.ReduceOp.SUM)
     dist.reduce(total_dequantization_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_prepare_comm_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_pre_aggregate_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_local_aggregate_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_remote_aggregate_time, 0, op=dist.ReduceOp.SUM)
     dist.reduce(total_convolution_time, 0, op=dist.ReduceOp.SUM)
+    dist.reduce(total_training_time, 0, op=dist.ReduceOp.SUM)
 
     if rank == 0:
         print("total_barrier_time(ms): {}".format(total_barrier_time[0] / float(world_size)))
         print("total_quantization_time(ms): {}".format(total_quantization_time[0] / float(world_size)))
         print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
         print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
+        print("total_prepare_comm_time(ms): {}".format(total_prepare_comm_time[0] / float(world_size)))
+        print("total_pre_aggregate_time(ms): {}".format(total_pre_aggregate_time[0] / float(world_size)))
+        print("total_local_aggregate_time(ms): {}".format(total_local_aggregate_time[0] / float(world_size)))
+        print("total_remote_aggregate_time(ms): {}".format(total_remote_aggregate_time[0] / float(world_size)))
         print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
+        print("total_training_time(ms): {}".format(total_training_time[0] / float(world_size)))
+
+    TimeRecorder.ctx.save_time_to_file(config["graph_name"], world_size)
