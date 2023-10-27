@@ -4,7 +4,8 @@ import torch
 import torch.distributed as dist
 from .DistributedGraph import DistributedGraph, DistributedGraphForPre
 from .DataProcessor import DataProcessor, DataProcessorForPre, DataProcessorForPreAggresive
-from .CommBuffer import CommBuffer
+from .CommBuffer import CommBuffer, CommBufferForQuantization
+from .CommSplits import CommSplits
 import os
 
 
@@ -66,10 +67,10 @@ def get_distributed_graph(
     remote_edges_list,
     local_nodes_list,
     nodes_range_on_each_subgraph,
-    num_local_nodes,
-    max_feat_len,
-    world_size,
-    is_fp16,
+    num_local_nodes: int,
+    max_feat_len: int,
+    world_size: int,
+    bits: int,
 ):
     in_degrees = DataProcessor.get_in_degrees(local_edges_list, remote_edges_list, num_local_nodes)
 
@@ -100,10 +101,12 @@ def get_distributed_graph(
         local_edges_list, remote_edges_list, local_nodes_list.size(0), remote_nodes_list.size(0)
     )
 
-    num_send_nodes = local_nodes_required_by_other.size(0)
-    num_recv_nodes = remote_nodes_list.size(0)
+    comm_splits = CommSplits(remote_nodes_num_from_each_subgraph.tolist(), num_local_nodes_required_by_other.tolist(), world_size, bits)
+    comm_buf = CommBuffer(comm_splits, max_feat_len, bits)
+    comm_buf_for_quantization = None
 
-    comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
+    if bits == 2:
+        comm_buf_for_quantization = CommBufferForQuantization(comm_splits, max_feat_len, bits)
 
     distributed_graph = DistributedGraph(
         local_adj_t,
@@ -112,7 +115,9 @@ def get_distributed_graph(
         num_local_nodes_required_by_other.tolist(),
         remote_nodes_num_from_each_subgraph.tolist(),
         in_degrees,
+        comm_splits,
         comm_buf,
+        comm_buf_for_quantization,
     )
 
     return distributed_graph
@@ -126,7 +131,7 @@ def get_distributed_graph_for_pre(
     max_feat_len,
     rank,
     world_size,
-    is_fp16,
+    bits,
 ):
     in_degrees = DataProcessor.get_in_degrees(local_edges_list, remote_edges_list, num_local_nodes)
 
@@ -167,10 +172,12 @@ def get_distributed_graph_for_pre(
         nodes_range_on_each_subgraph[rank],
     )
 
-    num_send_nodes = sum(pre_post_aggr_to_splits)
-    num_recv_nodes = sum(pre_post_aggr_from_splits)
-
-    comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
+    comm_splits = CommSplits(pre_post_aggr_from_splits, pre_post_aggr_to_splits, world_size, bits)
+    comm_buf = CommBuffer(comm_splits, max_feat_len, bits)
+    comm_buf_for_quantization = None
+    if bits == 2:
+        comm_buf_for_quantization = CommBufferForQuantization(comm_splits, max_feat_len, bits)
+    # comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
 
     distributed_graph = DistributedGraphForPre(
         local_adj_t,
@@ -179,7 +186,9 @@ def get_distributed_graph_for_pre(
         pre_post_aggr_from_splits,
         pre_post_aggr_to_splits,
         in_degrees,
+        comm_splits,
         comm_buf,
+        comm_buf_for_quantization
     )
 
     print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
@@ -202,7 +211,7 @@ def get_distributed_graph_for_pre_aggressive(
     max_feat_len,
     rank,
     world_size,
-    is_fp16,
+    bits,
 ):
     in_degrees = DataProcessor.get_in_degrees(local_edges_list, remote_edges_list, num_local_nodes)
 
@@ -235,10 +244,12 @@ def get_distributed_graph_for_pre_aggressive(
         nodes_range_on_each_subgraph[rank],
     )
 
-    num_send_nodes = sum(pre_post_aggr_to_splits)
-    num_recv_nodes = sum(pre_post_aggr_from_splits)
+    comm_splits = CommSplits(pre_post_aggr_from_splits, pre_post_aggr_to_splits, world_size, bits)
+    comm_buf = CommBuffer(comm_splits, max_feat_len, bits)
+    comm_buf_for_quantization = None
 
-    comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
+    if bits == 2:
+        comm_buf_for_quantization = CommBufferForQuantization(comm_splits, max_feat_len, bits)
 
     distributed_graph = DistributedGraphForPre(
         local_adj_t,
@@ -247,7 +258,9 @@ def get_distributed_graph_for_pre_aggressive(
         pre_post_aggr_from_splits,
         pre_post_aggr_to_splits,
         in_degrees,
+        comm_splits,
         comm_buf,
+        comm_buf_for_quantization,
     )
 
     # print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
@@ -267,7 +280,7 @@ def load_data(config):
     graph_name = config["graph_name"]
     # is_fp16 = config['is_fp16']
     num_bits = config["num_bits"]
-    is_fp16 = True if num_bits != 32 else False
+    # is_fp16 = True if num_bits != 32 else False
     is_pre_delay = config["is_pre_delay"]
     in_channels = config["in_channels"]
     hidden_channels = config["hidden_channels"]
@@ -297,7 +310,7 @@ def load_data(config):
             max_feat_len,
             rank,
             world_size,
-            is_fp16,
+            num_bits,
         )
     else:
         distributed_graph = get_distributed_graph(
@@ -308,7 +321,7 @@ def load_data(config):
             num_local_nodes,
             max_feat_len,
             world_size,
-            is_fp16,
+            num_bits,
         )
 
     nodes_labels_list = load_nodes_labels(input_dir, graph_name, rank)

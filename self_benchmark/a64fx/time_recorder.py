@@ -1,6 +1,5 @@
 import torch
 
-
 class TimeRecorder(object):
     def __init__(self, num_layer, num_epoch) -> None:
         self.barrier_time = torch.zeros((num_layer * 2, num_epoch))

@@ -5,6 +5,8 @@ import torch.distributed as dist
 from assigner import Assigner
 from time_recorder import TimeRecorder
 from quantizer import Quantizer, Quantizer_v1, Quantizer_for_all_procs
+from data_manager import CommBuffer, CommBufferForQuantization
+from data_manager import CommSplits
 
 
 def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
@@ -21,11 +23,6 @@ class Communicator(object):
         self.world_size = -1
         self.rank = -1
 
-        self.quantized_send_splits_forward = None
-        self.quantized_recv_splits_forward = None
-        self.quantized_send_splits_backward = None
-        self.quantized_recv_splits_backward = None
-
         Communicator.ctx = self
 
     def init_dist_group(self):
@@ -38,6 +35,7 @@ class Communicator(object):
                 torch.set_num_threads(11)
             else:
                 torch.set_num_threads(12)
+            print("num_threads: ", torch.get_num_threads())
         else:
             # backend with torch_ccl
             import torch_ccl
@@ -54,44 +52,52 @@ class Communicator(object):
         return (self.rank, self.world_size)
 
     def comm(
-        self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, layer, is_training, direction
+        self, comm_splits, comm_buf, comm_buf_for_quantization, layer, is_training, direction
     ):
         quantized_buf = None
         dequantized_nodes_feat_range = None
         dequantized_params = None
+        comm_handle = None
 
         if self.num_bits == 32 or is_training is False:
-            comm_handle = self.comm_with_fp32(recv_buf, send_buf, recv_splits, send_splits)
+            comm_handle = self.comm_with_fp32(comm_splits, comm_buf, direction)
         elif self.num_bits == 16:
-            comm_handle = self.comm_with_fp16(
-                recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits
-            )
-        elif self.num_bits == 2 or self.num_bits == 4 or self.num_bits == 8:
+            comm_handle = self.comm_with_fp16(comm_splits, comm_buf, direction)
+            
+        elif self.num_bits == 2:
             # comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params = self.comm_with_pure_quantization(
             #     recv_buf, send_buf, recv_splits, send_splits
             # )
-            comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params = self.comm_with_pure_quantization_for_all_procs(recv_buf, send_buf, recv_splits, send_splits, direction)
+            comm_handle = self.comm_with_int2_quantization_for_all_procs(comm_splits, comm_buf, comm_buf_for_quantization, direction)
+        # else:
+            # nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(layer)
+            # (
+            #     comm_handle,
+            #     quantized_buf,
+            #     dequantized_nodes_feat_range,
+            #     dequantized_params,
+            # ) = self.comm_with_mix_quantization(
+            #     recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor
+            # )
+        return comm_handle
+
+    def comm_with_fp32(self, comm_splits: CommSplits, comm_buf: CommBuffer, direction: str):
+        if direction == "forward":
+            recv_buf = comm_buf.recv_buf
+            send_buf = comm_buf.send_buf
+            recv_splits = comm_splits.recv_splits
+            send_splits = comm_splits.send_splits
         else:
-            nodes_num_bits_tensor = Assigner.ctx.get_node_dataformat(layer)
-            (
-                comm_handle,
-                quantized_buf,
-                dequantized_nodes_feat_range,
-                dequantized_params,
-            ) = self.comm_with_mix_quantization(
-                recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor
-            )
+            recv_buf = comm_buf.send_buf
+            send_buf = comm_buf.recv_buf
+            recv_splits = comm_splits.send_splits
+            send_splits = comm_splits.recv_splits
 
-        return (comm_handle, quantized_buf, dequantized_nodes_feat_range, dequantized_params)
-
-    def comm_with_fp32(self, recv_buf, send_buf, recv_splits, send_splits):
         barrier_begin = time.perf_counter()
         dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
-        comm_handle = dist.all_to_all_single(
-            recv_buf, send_buf, recv_splits, send_splits, async_op=self.is_async
-        )
+        comm_handle = dist.all_to_all_single(recv_buf, send_buf, recv_splits, send_splits, async_op=self.is_async)
         comm_end = time.perf_counter()
         TimeRecorder.ctx.record_barrier_time(barrier_end - barrier_begin)
         TimeRecorder.ctx.record_communication_time(comm_end - comm_begin)
@@ -101,7 +107,22 @@ class Communicator(object):
         TimeRecorder.print_time(dist.get_rank(), "inner comm (ms): ", (comm_end - comm_begin) * 1000.0)
         return comm_handle
 
-    def comm_with_fp16(self, recv_buf, send_buf, recv_buf_fp16, send_buf_fp16, recv_splits, send_splits):
+    def comm_with_fp16(self, comm_splits: CommSplits, comm_buf: CommBuffer, direction: str):
+        if direction == "forward":
+            recv_buf = comm_buf.recv_buf
+            send_buf = comm_buf.send_buf
+            recv_buf_fp16 = comm_buf.recv_buf_fp16
+            send_buf_fp16 = comm_buf.send_buf_fp16
+            recv_splits = comm_splits.recv_splits
+            send_splits = comm_splits.send_splits
+        else:
+            recv_buf = comm_buf.send_buf
+            send_buf = comm_buf.recv_buf
+            recv_buf_fp16 = comm_buf.send_buf_fp16
+            send_buf_fp16 = comm_buf.recv_buf_fp16
+            recv_splits = comm_splits.send_splits
+            send_splits = comm_splits.recv_splits
+
         quantization_begin = time.perf_counter()
         send_buf_fp16.copy_(send_buf)
         quantization_end = time.perf_counter()
@@ -109,9 +130,7 @@ class Communicator(object):
         # dist.barrier()
         barrier_end = time.perf_counter()
         comm_begin = time.perf_counter()
-        comm_handle = dist.all_to_all_single(
-            recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, async_op=self.is_async
-        )
+        comm_handle = dist.all_to_all_single(recv_buf_fp16, send_buf_fp16, recv_splits, send_splits, async_op=self.is_async)
         comm_end = time.perf_counter()
         dequantization_begin = time.perf_counter()
         recv_buf.copy_(recv_buf_fp16)
@@ -208,69 +227,60 @@ class Communicator(object):
 
         return comm_handle, quantized_recv_data_buf, quantized_recv_splits, quantized_recv_params_buf
 
-    def set_quantized_splits(self, direction, recv_splits, send_splits):
-        quantized_recv_splits = list()
-        quantized_send_splits = list()
-        for rank in range(self.world_size):
-            # prepare the quantized buffer for communication
-            int8_recv_buf_size = Quantizer_for_all_procs.ctx.get_quantized_splits(recv_splits[rank])
-            int8_send_buf_size = Quantizer_for_all_procs.ctx.get_quantized_splits(send_splits[rank])
-            quantized_recv_splits.append(int8_recv_buf_size)
-            quantized_send_splits.append(int8_send_buf_size)
-
-        if direction == "forward":
-            self.quantized_recv_splits_forward = quantized_recv_splits
-            self.quantized_send_splits_forward = quantized_send_splits
-        else:
-            self.quantized_recv_splits_backward = quantized_recv_splits
-            self.quantized_send_splits_backward = quantized_send_splits
-
-    def comm_with_pure_quantization_for_all_procs(
+    def comm_with_int2_quantization_for_all_procs(
         self,
-        recv_buf,
-        send_buf,
-        recv_splits,
-        send_splits,
-        direction,
+        comm_splits: CommSplits,
+        comm_buf: CommBuffer,
+        comm_buf_for_quantization: CommBufferForQuantization,
+        direction: str,
     ):
-        # send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
-
         prepare_params_begin = time.perf_counter()
-
         if direction == "forward":
-            quantized_recv_splits = self.quantized_recv_splits_forward
-            quantized_send_splits = self.quantized_send_splits_forward
+            recv_splits = comm_splits.recv_splits
+            send_splits = comm_splits.send_splits
 
-            if quantized_recv_splits is None or quantized_send_splits is None:
-                self.set_quantized_splits(direction, recv_splits, send_splits)
-                quantized_recv_splits = self.quantized_recv_splits_forward
-                quantized_send_splits = self.quantized_send_splits_forward
-        elif direction == "backward":
-            quantized_recv_splits = self.quantized_recv_splits_backward
-            quantized_send_splits = self.quantized_send_splits_backward
+            recv_splits_int2 = comm_splits.recv_splits_int2
+            send_splits_int2 = comm_splits.send_splits_int2
 
-            if quantized_recv_splits is None or quantized_send_splits is None:
-                self.set_quantized_splits(direction, recv_splits, send_splits)
-                quantized_recv_splits = self.quantized_recv_splits_backward
-                quantized_send_splits = self.quantized_send_splits_backward
+            recv_buf = comm_buf.recv_buf
+            send_buf = comm_buf.send_buf
+
+            quantized_recv_data_buf = comm_buf_for_quantization.quantized_recv_data_buf
+            quantized_send_data_buf = comm_buf_for_quantization.quantized_send_data_buf
+
+            quantized_recv_params_buf_bf16 = comm_buf_for_quantization.quantized_recv_params_buf_bf16
+            quantized_send_params_buf_bf16 = comm_buf_for_quantization.quantized_send_params_buf_bf16
+            quantized_recv_params_buf_fp32 = comm_buf_for_quantization.quantized_recv_params_buf_fp32
+            quantized_send_params_buf_fp32 = comm_buf_for_quantization.quantized_send_params_buf_fp32
+
+            quantized_work_range_per_proc = comm_buf_for_quantization.quantized_work_range_per_proc
         else:
-            print("direction is wrong!")
-        
-        
-        quantized_recv_data_buf = torch.empty((sum(quantized_recv_splits), recv_buf.size(-1)), dtype=torch.uint8)
-        quantized_send_data_buf = torch.empty((sum(quantized_send_splits), send_buf.size(-1)), dtype=torch.uint8)
+            recv_splits = comm_splits.send_splits
+            send_splits = comm_splits.recv_splits
 
-        quantized_recv_params_buf = torch.empty((sum(recv_splits), 2), dtype=torch.bfloat16)
-        quantized_send_params_buf = torch.empty((sum(send_splits), 2), dtype=torch.float32)
+            recv_splits_int2 = comm_splits.send_splits_int2
+            send_splits_int2 = comm_splits.recv_splits_int2
 
-        quantized_work_range_per_proc = torch.empty((len(send_splits) + 1), dtype=torch.int32)
-        quantized_work_range_per_proc[0] = 0
-        quantized_work_range_per_proc[1:] = torch.tensor(send_splits, dtype=torch.int32).cumsum(0)
+            recv_buf = comm_buf.send_buf
+            send_buf = comm_buf.recv_buf
+
+            quantized_recv_data_buf = comm_buf_for_quantization.quantized_send_data_buf
+            quantized_send_data_buf = comm_buf_for_quantization.quantized_recv_data_buf
+            
+            quantized_recv_params_buf_bf16 = comm_buf_for_quantization.quantized_send_params_buf_bf16
+            quantized_send_params_buf_bf16 = comm_buf_for_quantization.quantized_recv_params_buf_bf16
+            quantized_recv_params_buf_fp32 = comm_buf_for_quantization.quantized_send_params_buf_fp32
+            quantized_send_params_buf_fp32 = comm_buf_for_quantization.quantized_recv_params_buf_fp32
+
+            quantized_work_range_per_proc = comm_buf_for_quantization.dequantized_work_range_per_proc
 
         prepare_params_end = time.perf_counter()
         
         quantize_begin = time.perf_counter()
-        Quantizer_for_all_procs.ctx.quantize_fp32_to_intX(send_buf, quantized_send_data_buf, quantized_send_params_buf, quantized_work_range_per_proc)
+        Quantizer_for_all_procs.ctx.quantize_fp32_to_intX(send_buf, 
+                                                          quantized_send_data_buf, 
+                                                          quantized_send_params_buf_fp32, 
+                                                          quantized_work_range_per_proc)
 
         rank = dist.get_rank()
         quantize_end = time.perf_counter()
@@ -283,17 +293,21 @@ class Communicator(object):
         # print_time(rank, "barrier (ms): ", (barrier_end - barrier_begin) * 1000.0)
         # comm for quantized params (scale and zero_point)
         comm_param_begin = time.perf_counter()
-        quantized_send_params_buf = quantized_send_params_buf.to(torch.bfloat16)
-        dist.all_to_all_single(quantized_recv_params_buf, quantized_send_params_buf, recv_splits, send_splits, async_op=False)
-        quantized_recv_params_buf = quantized_recv_params_buf.to(torch.float32)
+        quantized_send_params_buf_bf16.copy_(quantized_send_params_buf_fp32)
+        dist.all_to_all_single(quantized_recv_params_buf_bf16, 
+                               quantized_send_params_buf_bf16, 
+                               recv_splits, 
+                               send_splits, 
+                               async_op=False)
+        quantized_recv_params_buf_fp32.copy_(quantized_recv_params_buf_bf16)
         comm_param_end = time.perf_counter()
+
         comm_data_begin = time.perf_counter()
-        # comm_handle = None
-        # dist.all_to_all(recv_quant_param_buf_list, send_quant_param_buf_list, async_op=False)
-        # print_time(rank, "inner comm for param (ms): ", (comm_for_param_end - comm_for_param_begin) * 1000.0)
-        # comm for quantized data
-        # comm_handle = dist.all_to_all(recv_quant_data_buf_list, send_quant_data_buf_list, async_op=False)
-        comm_handle = dist.all_to_all_single(quantized_recv_data_buf, quantized_send_data_buf, quantized_recv_splits, quantized_send_splits, async_op=self.is_async)
+        comm_handle = dist.all_to_all_single(quantized_recv_data_buf, 
+                                             quantized_send_data_buf, 
+                                             recv_splits_int2, 
+                                             send_splits_int2, 
+                                             async_op=self.is_async)
         comm_data_end = time.perf_counter()
 
         TimeRecorder.ctx.record_quantization_time(quantize_end - quantize_begin)
@@ -307,10 +321,7 @@ class Communicator(object):
         print("rank:{}, comm for param (ms): {}".format(rank, (comm_param_end - comm_param_begin) * 1000.0))
         print("rank:{}, comm for data (ms): {}".format(rank, (comm_data_end - comm_data_begin) * 1000.0), flush=True)
 
-
-        return comm_handle, quantized_recv_data_buf, quantized_recv_splits, quantized_recv_params_buf
-
-        
+        return comm_handle
 
     def get_splits_for_comm_quantized_data(
         self,

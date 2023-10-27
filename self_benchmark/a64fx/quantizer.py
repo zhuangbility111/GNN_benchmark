@@ -6,7 +6,6 @@ import torch.distributed as dist
 import quantization_cpu
 from time_recorder import TimeRecorder
 
-
 class Quantizer(object):
     def __init__(self):
         pass

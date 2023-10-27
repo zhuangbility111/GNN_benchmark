@@ -77,6 +77,7 @@ def train(model, data, optimizer, num_epochs, num_bits):
     total_training_dur = 0
 
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
+    dist.barrier()
     for epoch in range(num_epochs):
         model.train()
         forward_start = time.perf_counter()
@@ -123,6 +124,9 @@ if __name__ == "__main__":
 
     Communicator(config["num_bits"], config["is_async"])
     rank, world_size = Communicator.ctx.init_dist_group()
+
+    Quantizer_for_all_procs(world_size, config["num_bits"])
+
     if (
         config["graph_name"] != "arxiv"
         and config["graph_name"] != "products"
@@ -145,9 +149,9 @@ if __name__ == "__main__":
         data["graph"].comm_buf.recv_buf.size(0),
     )
 
-    Quantizer_for_all_procs(world_size, config["num_bits"])
-
     TimeRecorder(config["num_layers"], config["num_epochs"])
+
+    print("config: {}".format(config), flush=True)
 
     # print("finish data loading.", flush=True)
     train(model, data, optimizer, config["num_epochs"], config["num_bits"])
