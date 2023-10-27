@@ -1,4 +1,4 @@
-# GNN_benchmark
+# General and Scalable Framework for GCN Training on CPU-powered Supercomputers
 To run the code on ABCI (Intel Xeon) supercomputer:
 1. switch branch to `cpu_dev`: git checkout cpu_dev
 2. go to the directory `self_benchmark/a64fx/sub_scripts_at_abci/batch_job_submission/`
