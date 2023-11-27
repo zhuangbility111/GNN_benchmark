@@ -27,6 +27,8 @@ class Graph(object):
         self.edge_index = edge_index
         self.node_feat = node_feat
         self.num_nodes = num_nodes
+        self.num_edges = edge_index[0].shape[0]
+        self.num_node_weights = 0
         self.node_label = node_label
         self.train_idx = train_idx
         self.valid_idx = valid_idx
@@ -38,7 +40,8 @@ class Graph(object):
         """
         local_degs = torch.zeros((num_local_nodes), dtype=torch.int64)
         source = torch.ones((local_edges_list[1].shape[0]), dtype=torch.int64)
-        local_degs.index_add_(dim=0, index=local_edges_list[1], source=source)
+        index = torch.from_numpy(local_edges_list[1])
+        local_degs.index_add_(dim=0, index=index, source=source)
         return local_degs
 
     def save_node_feat(self, graph_name: str, out_dir: str):

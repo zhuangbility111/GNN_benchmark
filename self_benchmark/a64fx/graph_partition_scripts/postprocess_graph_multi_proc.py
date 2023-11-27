@@ -17,6 +17,7 @@ def divide_edges_into_local_and_remote(
     """
     edges_list = edges_list.T
     src_nodes, dst_nodes = edges_list
+    assert dst_nodes.min() >= node_idx_begin and dst_nodes.max() <= node_idx_end
     local_idx = (src_nodes >= node_idx_begin) & (src_nodes <= node_idx_end)
     remote_idx = ~local_idx
 
@@ -52,8 +53,8 @@ def load_node_ids(file_name: str) -> np.ndarray:
         file_name,
         sep=" ",
         header=None,
-        # usecols=[0, 4],
-        usecols=[0, 5],
+        usecols=[0, 4],
+        # usecols=[0, 5],
         dtype="int64",
     ).values
     return node_ids
@@ -137,35 +138,46 @@ def split_nodes_feats(
         print("partition {} over".format(i), flush=True)
 
 
-def compare_array(train_idx: np.ndarray, node_ids: np.ndarray, node_idx_begin: int) -> np.ndarray:
-    """
-    compare two array and remap the elem in train_idx according to the mapping in nodes_id_list
-    global id is mapped to local id in train_idx
-    """
-    local_train_idx = []
-    train_idx.sort()
-    idx_in_mask = 0
-    idx_in_node = 0
-    len_mask = train_idx.shape[0]
-    len_node_list = node_ids.shape[0]
-    while idx_in_mask < len_mask and idx_in_node < len_node_list:
-        if train_idx[idx_in_mask] < node_ids[idx_in_node][1]:
-            idx_in_mask += 1
-        elif train_idx[idx_in_mask] > node_ids[idx_in_node][1]:
-            idx_in_node += 1
-        else:
-            local_train_idx.append(node_ids[idx_in_node][0] - node_idx_begin)
-            idx_in_mask += 1
-            idx_in_node += 1
+# def compare_array(train_idx: np.ndarray, node_ids: np.ndarray, node_idx_begin: int) -> np.ndarray:
+#     """
+#     compare two array and remap the elem in train_idx according to the mapping in nodes_id_list
+#     global id is mapped to local id in train_idx
+#     """
+#     local_train_idx = []
+#     train_idx.sort()
+#     idx_in_mask = 0
+#     idx_in_node = 0
+#     len_mask = train_idx.shape[0]
+#     len_node_list = node_ids.shape[0]
+#     while idx_in_mask < len_mask and idx_in_node < len_node_list:
+#         if train_idx[idx_in_mask] < node_ids[idx_in_node][1]:
+#             idx_in_mask += 1
+#         elif train_idx[idx_in_mask] > node_ids[idx_in_node][1]:
+#             idx_in_node += 1
+#         else:
+#             local_train_idx.append(node_ids[idx_in_node][0] - node_idx_begin)
+#             idx_in_mask += 1
+#             idx_in_node += 1
 
-    return np.array(local_train_idx, dtype=np.int64)
+#     return np.array(local_train_idx, dtype=np.int64)
 
 
 def remap_dataset_mask(data_idx: np.ndarray, node_ids: np.ndarray, node_idx_begin: int, file_name: str):
     """
     remap the data_idx from global id to local id and save it to file_name
     """
-    local_data_idx = compare_array(data_idx, node_ids, node_idx_begin)
+    # local_data_idx = compare_array(data_idx, node_ids, node_idx_begin)
+    # construct a dict based on node_ids
+    node_ids_dict = {}
+    for i in range(node_ids.shape[0]):
+        node_ids_dict[node_ids[i][1]] = node_ids[i][0] - node_idx_begin
+    local_data_idx = []
+    for i in range(data_idx.shape[0]):
+        if data_idx[i] in node_ids_dict:
+            local_data_idx.append(node_ids_dict[data_idx[i]])
+        # else:
+            # print("data_idx {} not in node_ids_dict".format(data_idx[i]))
+    local_data_idx = np.array(local_data_idx, dtype=np.int64)
     np.save(file_name, local_data_idx)
 
 
@@ -182,7 +194,7 @@ def split_node_datamask(
     for i in range(begin_part, end_part):
         node_ids = np.load(os.path.join(out_dir, "p{:0>3d}-{}_nodes.npy".format(i, graph_name)))
         node_idx_begin = node_ids[0][0]
-        node_ids = node_ids[node_ids[:, 1].argsort()]
+        # node_ids = node_ids[node_ids[:, 1].argsort()]
 
         remap_dataset_mask(
             train_idx,
