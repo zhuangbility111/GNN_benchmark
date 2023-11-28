@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from .DistributedGraph import DistributedGraph, DistributedGraphForPre
-from .DataProcessor import DataProcessor, DataProcessorForPre, DataProcessorForPreAggresive
+from .DataProcessor import DataProcessor, DataProcessorForPreAggresive
 from .CommBuffer import CommBuffer
 import os
 
@@ -13,7 +13,6 @@ def load_graph_structures(input_dir, graph_name, rank):
     local_nodes_list = np.load(os.path.join(input_dir, "p{:0>3d}-{}_nodes.npy".format(rank, graph_name)))
     node_idx_begin = local_nodes_list[0][0]
     node_idx_end = local_nodes_list[local_nodes_list.shape[0] - 1][0]
-    # print("nodes_id_range: {} - {}".format(node_idx_begin, node_idx_end))
     num_local_nodes = node_idx_end - node_idx_begin + 1
 
     # ----------------------------------------------------------
@@ -118,82 +117,6 @@ def get_distributed_graph(
     return distributed_graph
 
 
-def get_distributed_graph_for_pre(
-    local_edges_list,
-    remote_edges_list,
-    nodes_range_on_each_subgraph,
-    num_local_nodes,
-    max_feat_len,
-    rank,
-    world_size,
-    is_fp16,
-):
-    in_degrees = DataProcessor.get_in_degrees(local_edges_list, remote_edges_list, num_local_nodes)
-
-    # local nodes in local_edges_list and remote_edges_list has been localized
-    # in order to perform pre_aggregation, the id of local nodes in remote_edges_list must be recover to global id
-    remote_edges_list[1] += nodes_range_on_each_subgraph[rank]
-
-    (
-        remote_edges_list_pre_post_aggr_from,
-        remote_edges_list_pre_post_aggr_to,
-        begin_edge_on_each_partition_from,
-        begin_edge_on_each_partition_to,
-        pre_aggr_from_splits,
-        post_aggr_from_splits,
-        post_aggr_to_splits,
-        pre_aggr_to_splits,
-    ) = DataProcessorForPre.divide_remote_edges_list(
-        nodes_range_on_each_subgraph, remote_edges_list, world_size
-    )
-
-    pre_post_aggr_from_splits = []
-    pre_post_aggr_to_splits = []
-    for i in range(world_size):
-        pre_post_aggr_from_splits.append(pre_aggr_from_splits[i] + post_aggr_from_splits[i])
-        pre_post_aggr_to_splits.append(pre_aggr_to_splits[i] + post_aggr_to_splits[i])
-
-    (
-        local_adj_t,
-        adj_t_pre_post_aggr_from,
-        adj_t_pre_post_aggr_to,
-    ) = DataProcessorForPre.transform_edge_index_to_sparse_tensor(
-        local_edges_list,
-        remote_edges_list_pre_post_aggr_from,
-        remote_edges_list_pre_post_aggr_to,
-        begin_edge_on_each_partition_from,
-        begin_edge_on_each_partition_to,
-        num_local_nodes,
-        nodes_range_on_each_subgraph[rank],
-    )
-
-    num_send_nodes = sum(pre_post_aggr_to_splits)
-    num_recv_nodes = sum(pre_post_aggr_from_splits)
-
-    comm_buf = CommBuffer((num_send_nodes, max_feat_len), (num_recv_nodes, max_feat_len), is_fp16)
-
-    distributed_graph = DistributedGraphForPre(
-        local_adj_t,
-        adj_t_pre_post_aggr_from,
-        adj_t_pre_post_aggr_to,
-        pre_post_aggr_from_splits,
-        pre_post_aggr_to_splits,
-        in_degrees,
-        comm_buf,
-    )
-
-    print("graph.local_adj_t = {}".format(distributed_graph.local_adj_t))
-    print("graph.adj_t_pre_post_aggr_from = {}".format(distributed_graph.adj_t_pre_post_aggr_from))
-    print("graph.adj_t_pre_post_aggr_to = {}".format(distributed_graph.adj_t_pre_post_aggr_to))
-    print("graph.pre_post_aggr_from_splits = {}".format(distributed_graph.pre_post_aggr_from_splits))
-    print("graph.pre_post_aggr_to_splits = {}".format(distributed_graph.pre_post_aggr_to_splits))
-    print("graph.in_degrees = {}".format(distributed_graph.in_degrees))
-    print("graph.send_buf.shape = {}".format(distributed_graph.comm_buf.send_buf.shape))
-    print("graph.recv_buf.shape = {}".format(distributed_graph.comm_buf.recv_buf.shape))
-
-    return distributed_graph
-
-
 def get_distributed_graph_for_pre_aggressive(
     local_edges_list,
     remote_edges_list,
@@ -225,7 +148,7 @@ def get_distributed_graph_for_pre_aggressive(
         local_adj_t,
         adj_t_pre_post_aggr_from,
         adj_t_pre_post_aggr_to,
-    ) = DataProcessorForPre.transform_edge_index_to_sparse_tensor(
+    ) = DataProcessorForPreAggresive.transform_edge_index_to_sparse_tensor(
         local_edges_list,
         remote_edges_list_pre_post_aggr_from,
         remote_edges_list_pre_post_aggr_to,
