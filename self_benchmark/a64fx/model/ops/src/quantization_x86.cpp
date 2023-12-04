@@ -3,34 +3,16 @@
 #include <stdint.h>
 #include <cmath>
 #include "quantization_kernel_x86.h"
+#include "utils.h"
 
 #include <random>
 
 using torch::Tensor;
 
-// #ifdef __AVX512F__
+#ifdef __AVX512F__
 #include <immintrin.h>
 #define VEC_LEN 16
-// #endif // __AVX512F__
-
-inline int32_t divup(int32_t x, int32_t y)
-{
-    return (x + y - 1) / y;
-}
-
-void divide_work(int *work_range, int total_work, int num_threads)
-{
-    int chunk_size;
-    int remain_work = total_work;
-    work_range[0] = 0;
-    for (int i = 0; i < num_threads; i++)
-    {
-        chunk_size = divup(remain_work, num_threads - i);
-        work_range[i + 1] = work_range[i] + chunk_size;
-        remain_work -= chunk_size;
-    }
-    work_range[num_threads] = total_work;
-}
+#endif // __AVX512F__
 
 void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int bits)
 {
@@ -71,18 +53,6 @@ void quantize_tensor(Tensor input, Tensor output, Tensor min, Tensor scale, int 
         for (int i = 0; i < divisible_num_rows; i += elems_per_byte)
         {
             int row_idx = row_begin + i;
-// for (int j = 0; j < feat_len; j++) {
-//     uint8_t packed_val = 0;
-//     for (int k = 0; k < elems_per_byte; k++) {
-// 		// printf("idx in input_dir = %d, idx in min_ptr = %d\n", (row_idx + k) * feat_len + j, row_idx + k);
-//         const int32_t val =
-//             std::nearbyint((input_ptr[(row_idx + k) * feat_len + j] - min_ptr[row_idx + k]) / scale_ptr[row_idx + k]);
-//         packed_val |= (val << ((elems_per_byte-k-1) * bits));
-//     }
-// 	// printf("idx in out = %d\n", row_idx / elems_per_byte * feat_len + j);
-//     output_ptr[row_idx / elems_per_byte * feat_len + j] = packed_val;
-// }
-#pragma unroll(4)
             for (int j = 0; j < feat_len; j += VEC_LEN)
             {
                 // compare j with feath_len to avoid out-of-bound access, set mask register
@@ -486,14 +456,4 @@ void dequantize_tensor_v2_torch(Tensor input, Tensor output,
         // else
         //     printf("Error: unsupported num_bits = %d\n", num_bits);
     }
-}
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
-{
-    m.def("quantize_tensor", &quantize_tensor);
-    m.def("dequantize_tensor", &dequantize_tensor);
-    m.def("quantize_tensor_v1", &quantize_tensor_v1);
-    m.def("dequantize_tensor_v1", &dequantize_tensor_v1);
-    m.def("quantize_tensor_v2_torch", &quantize_tensor_v2_torch);
-    m.def("dequantize_tensor_v2_torch", &dequantize_tensor_v2_torch);
 }
