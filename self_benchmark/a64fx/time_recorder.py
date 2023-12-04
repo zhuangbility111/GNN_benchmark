@@ -101,6 +101,43 @@ class TimeRecorder(object):
     
     def get_total_training_time(self) -> float:
         return torch.sum(self.total_training_time).item() * 1000.0
+
+    def print_total_time(self) -> None:
+        # use mpi_reduce to get the average time of all mpi processes
+        total_barrier_time = torch.tensor([self.get_total_barrier_time()])
+        total_quantization_time = torch.tensor([self.get_total_quantization_time()])
+        total_communication_time = torch.tensor([self.get_total_communication_time()])
+        total_dequantization_time = torch.tensor([self.get_total_dequantization_time()])
+        total_prepare_comm_time = torch.tensor([self.get_total_prepare_comm_time()])
+        total_pre_aggregate_time = torch.tensor([self.get_total_pre_aggregate_time()])
+        total_local_aggregate_time = torch.tensor([self.get_total_local_aggregate_time()])
+        total_remote_aggregate_time = torch.tensor([self.get_total_remote_aggregate_time()])
+        total_convolution_time = torch.tensor([self.get_total_convolution_time()])
+        total_training_time = torch.tensor([self.get_total_training_time()])
+        dist.reduce(total_barrier_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_quantization_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_communication_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_dequantization_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_prepare_comm_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_pre_aggregate_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_local_aggregate_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_remote_aggregate_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_convolution_time, 0, op=dist.ReduceOp.SUM)
+        dist.reduce(total_training_time, 0, op=dist.ReduceOp.SUM)
+
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        if rank == 0:
+            print("total_barrier_time(ms): {}".format(total_barrier_time[0] / float(world_size)))
+            print("total_quantization_time(ms): {}".format(total_quantization_time[0] / float(world_size)))
+            print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
+            print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
+            print("total_prepare_comm_time(ms): {}".format(total_prepare_comm_time[0] / float(world_size)))
+            print("total_pre_aggregate_time(ms): {}".format(total_pre_aggregate_time[0] / float(world_size)))
+            print("total_local_aggregate_time(ms): {}".format(total_local_aggregate_time[0] / float(world_size)))
+            print("total_remote_aggregate_time(ms): {}".format(total_remote_aggregate_time[0] / float(world_size)))
+            print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
+            print("total_training_time(ms): {}".format(total_training_time[0] / float(world_size)))
     
     # save the time to file
     def save_time_to_file(self, graph_name, world_size) -> None:

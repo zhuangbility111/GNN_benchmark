@@ -38,7 +38,7 @@ def collect_acc(model, data):
     return train_acc, val_acc, test_acc
 
 
-def print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur):
+def print_forward_backward_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     total_forward_dur = torch.tensor([total_forward_dur])
@@ -70,10 +70,10 @@ def train(model, data, optimizer, num_epochs, num_bits):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     # start training
-    total_forward_dur = 0
-    total_backward_dur = 0
-    total_update_weight_dur = 0
-    total_training_dur = 0
+    total_forward_dur = 0.0
+    total_backward_dur = 0.0
+    total_update_weight_dur = 0.0
+    total_training_dur = 0.0
 
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
     dist.barrier()
@@ -104,7 +104,7 @@ def train(model, data, optimizer, num_epochs, num_bits):
         TimeRecorder.ctx.record_total_training_time(update_weight_end - forward_start)
         TimeRecorder.ctx.next_epoch()
 
-    print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
+    print_forward_backward_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -123,14 +123,15 @@ if __name__ == "__main__":
 
     Communicator(config["num_bits"], config["is_async"])
     rank, world_size = Communicator.ctx.init_dist_group()
-    if (
-        config["graph_name"] != "arxiv"
-        and config["graph_name"] != "products"
-        and config["graph_name"] != "papers100M"
-    ):
-        config["input_dir"] += "{}_{}_part/".format(config["graph_name"], world_size)
-    else:
-        config["input_dir"] += "ogbn_{}_{}_part/".format(config["graph_name"], world_size)
+    # if (
+    #     config["graph_name"] != "arxiv"
+    #     and config["graph_name"] != "products"
+    #     and config["graph_name"] != "papers100M"
+    # ):
+    #     config["input_dir"] += "{}_{}_part/".format(config["graph_name"], world_size)
+    # else:
+    #     config["input_dir"] += "ogbn_{}_{}_part/".format(config["graph_name"], world_size)
+    config["input_dir"] += "{}_{}_part/".format(config["graph_name"], world_size) 
 
     set_random_seed(config["random_seed"])
     model, optimizer = create_model_and_optimizer(config)
@@ -150,38 +151,5 @@ if __name__ == "__main__":
     # print("finish data loading.", flush=True)
     train(model, data, optimizer, config["num_epochs"], config["num_bits"])
 
-    # use mpi_reduce to get the average time of all mpi processes
-    total_barrier_time = torch.tensor([TimeRecorder.ctx.get_total_barrier_time()])
-    total_quantization_time = torch.tensor([TimeRecorder.ctx.get_total_quantization_time()])
-    total_communication_time = torch.tensor([TimeRecorder.ctx.get_total_communication_time()])
-    total_dequantization_time = torch.tensor([TimeRecorder.ctx.get_total_dequantization_time()])
-    total_prepare_comm_time = torch.tensor([TimeRecorder.ctx.get_total_prepare_comm_time()])
-    total_pre_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_pre_aggregate_time()])
-    total_local_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_local_aggregate_time()])
-    total_remote_aggregate_time = torch.tensor([TimeRecorder.ctx.get_total_remote_aggregate_time()])
-    total_convolution_time = torch.tensor([TimeRecorder.ctx.get_total_convolution_time()])
-    total_training_time = torch.tensor([TimeRecorder.ctx.get_total_training_time()])
-    dist.reduce(total_barrier_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_quantization_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_communication_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_dequantization_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_prepare_comm_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_pre_aggregate_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_local_aggregate_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_remote_aggregate_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_convolution_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_training_time, 0, op=dist.ReduceOp.SUM)
-
-    if rank == 0:
-        print("total_barrier_time(ms): {}".format(total_barrier_time[0] / float(world_size)))
-        print("total_quantization_time(ms): {}".format(total_quantization_time[0] / float(world_size)))
-        print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
-        print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
-        print("total_prepare_comm_time(ms): {}".format(total_prepare_comm_time[0] / float(world_size)))
-        print("total_pre_aggregate_time(ms): {}".format(total_pre_aggregate_time[0] / float(world_size)))
-        print("total_local_aggregate_time(ms): {}".format(total_local_aggregate_time[0] / float(world_size)))
-        print("total_remote_aggregate_time(ms): {}".format(total_remote_aggregate_time[0] / float(world_size)))
-        print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
-        print("total_training_time(ms): {}".format(total_training_time[0] / float(world_size)))
-
+    TimeRecorder.ctx.print_total_time()
     TimeRecorder.ctx.save_time_to_file(config["graph_name"], world_size)
