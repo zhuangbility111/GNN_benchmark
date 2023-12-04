@@ -63,13 +63,9 @@ class DistSAGEConvGrad(MessagePassing):
         return local_out
 
     def forward(self, graph, local_nodes_feat, layer) -> Tensor:
-        """"""
-        norm_begin = time.perf_counter()
-
         # communication first
         # linear_first = self.in_channels > self.out_channels
 
-        linear_begin = time.perf_counter()
         # if linear_first:
         # local_nodes_feat = self.lin(local_nodes_feat)
 
@@ -93,6 +89,5 @@ class DistSAGEConvGrad(MessagePassing):
 
         if self.bias is not None:
             out += self.bias
-        add_bias_end = time.perf_counter()
 
         return out
