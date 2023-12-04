@@ -1,0 +1,10 @@
+/vol0004/ra000012/data/wahib/gnn/pytorch/scripts/fujitsu/fccbuild/lib/python3.9/site-packages/numpy-1.22.4+3.gcd007c4-py3.9-linux-aarch64.egg/numpy/core/getlimits.py:499: UserWarning: The value of the smallest subnormal for <class 'numpy.float64'> type is zero.
+  setattr(self, word, getattr(machar, word).flat[0])
+/vol0004/ra000012/data/wahib/gnn/pytorch/scripts/fujitsu/fccbuild/lib/python3.9/site-packages/numpy-1.22.4+3.gcd007c4-py3.9-linux-aarch64.egg/numpy/core/getlimits.py:89: UserWarning: The value of the smallest subnormal for <class 'numpy.float64'> type is zero.
+  return self._float_to_str(self.smallest_subnormal)
+/vol0004/ra000012/data/wahib/gnn/pytorch/scripts/fujitsu/fccbuild/lib/python3.9/site-packages/numpy-1.22.4+3.gcd007c4-py3.9-linux-aarch64.egg/numpy/core/getlimits.py:499: UserWarning: The value of the smallest subnormal for <class 'numpy.float32'> type is zero.
+  setattr(self, word, getattr(machar, word).flat[0])
+/vol0004/ra000012/data/wahib/gnn/pytorch/scripts/fujitsu/fccbuild/lib/python3.9/site-packages/numpy-1.22.4+3.gcd007c4-py3.9-linux-aarch64.egg/numpy/core/getlimits.py:89: UserWarning: The value of the smallest subnormal for <class 'numpy.float32'> type is zero.
+  return self._float_to_str(self.smallest_subnormal)
+/vol0004/ra000012/data/wahib/gnn/pytorch/scripts/fujitsu/fccbuild/lib/python3.9/site-packages/torch_geometric-2.0.4-py3.9.egg/torch_geometric/nn/spmm_kernel.py:11: UserWarning: __floordiv__ is deprecated, and its behavior will change in a future version of pytorch. It currently rounds toward 0 (like the 'trunc' function NOT 'floor'). This results in incorrect rounding for negative values. To keep the current behavior, use torch.div(a, b, rounding_mode='trunc'), or for actual floor division, use torch.div(a, b, rounding_mode='floor').
+  target_flops_on_rows = total_flops_on_rows // num_threads_on_row
