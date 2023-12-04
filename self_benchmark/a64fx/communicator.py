@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer, Quantizer_v1
+from quantizer import QuantizerForPureBits, QuantizerForMixedBits
 
 
 def diff(out, ref, num_of_out, num_of_ref, atol=1e-05, rtol=1e-05):
@@ -23,6 +23,7 @@ class Communicator(object):
         Communicator.ctx = self
 
     def init_dist_group(self):
+        # fugaku
         if dist.is_mpi_available():
             # backend with mpi
             print("mpi in torch.distributed is available!")
@@ -32,6 +33,7 @@ class Communicator(object):
                 torch.set_num_threads(11)
             else:
                 torch.set_num_threads(12)
+        # abci
         else:
             # backend with torch_ccl
             import torch_ccl
@@ -41,7 +43,6 @@ class Communicator(object):
             print("use ccl backend for torch.distributed package on x86 cpu.")
             dist.init_process_group(backend="ccl", init_method="env://", world_size=world_size, rank=rank)
 
-        # print(f"dist_info RANK: {dist.get_rank()}, SIZE: {dist.get_world_size()}")
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
 
@@ -67,7 +68,7 @@ class Communicator(object):
                 quantized_buf,
                 dequantized_nodes_feat_range,
                 dequantized_params,
-            ) = self.comm_with_quantization_v1(
+            ) = self.comm_with_mixed_quantization(
                 recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor
             )
 
@@ -110,7 +111,7 @@ class Communicator(object):
         return comm_handle
 
     @staticmethod
-    def comm_with_quantization(
+    def comm_with_pure_quantization(
         recv_buf,
         send_buf,
         recv_splits,
@@ -133,14 +134,14 @@ class Communicator(object):
             send_end_idx += send_splits[rank]
 
             # prepare the quantized buffer for communication
-            num_send_nodes = Quantizer.get_quantized_buffer_size(send_splits[rank], num_bits)
-            num_recv_nodes = Quantizer.get_quantized_buffer_size(recv_splits[rank], num_bits)
+            num_send_nodes = QuantizerForPureBits.get_quantized_buffer_size(send_splits[rank], num_bits)
+            num_recv_nodes = QuantizerForPureBits.get_quantized_buffer_size(recv_splits[rank], num_bits)
             send_quant_data_buf_list.append(torch.empty(num_send_nodes, send_buf.size(-1), dtype=torch.uint8))
             recv_quant_data_buf_list.append(torch.empty(num_recv_nodes, recv_buf.size(-1), dtype=torch.uint8))
 
             if num_send_nodes > 0:
                 # quantize the data
-                send_quant_param = Quantizer.quantize_fp32_to_intX(
+                send_quant_param = QuantizerForPureBits.quantize_fp32_to_intX(
                     send_buf[send_begin_idx:send_end_idx], send_quant_data_buf_list[rank], num_bits
                 )
             else:
@@ -212,7 +213,7 @@ class Communicator(object):
 
         return quantized_recv_splits, quantized_send_splits
 
-    def comm_with_quantization_v1(self, recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor):
+    def comm_with_mixed_quantization(self, recv_buf, send_buf, recv_splits, send_splits, nodes_num_bits_tensor):
         prepare_params_begin = time.perf_counter()
         recv_splits_tensor = torch.tensor(recv_splits, dtype=torch.int32)
         send_splits_tensor = torch.tensor(send_splits, dtype=torch.int32)
@@ -227,7 +228,7 @@ class Communicator(object):
         send_params[:, 0] = nodes_num_bits_tensor
 
         # get the range of each node's quantized feature
-        quantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
+        quantized_nodes_feat_range = QuantizerForMixedBits.get_quantized_nodes_feat_range(
             int(num_send_nodes), send_buf.size(1), nodes_num_bits_tensor
         )
 
@@ -236,7 +237,7 @@ class Communicator(object):
 
         quantization_begin = time.perf_counter()
         # quantize the data
-        Quantizer_v1.quantize_fp32_to_intX(
+        QuantizerForMixedBits.quantize_fp32_to_intX(
             send_buf, quantized_send_buf, quantized_nodes_feat_range, send_params
         )
 
@@ -258,7 +259,7 @@ class Communicator(object):
         dequantized_params = recv_params.to(torch.float32)
 
         # get the range of each node's dequantized feature
-        dequantized_nodes_feat_range = Quantizer_v1.get_quantized_nodes_feat_range(
+        dequantized_nodes_feat_range = QuantizerForMixedBits.get_quantized_nodes_feat_range(
             int(num_recv_nodes), send_buf.size(1), dequantized_params[:, 0]
         )
 
@@ -321,7 +322,7 @@ class Communicator(object):
             scale = recv_quant_param_buf_list[rank][:, 0]
             zero_point = recv_quant_param_buf_list[rank][:, 1]
             if end_idx - begin_idx > 0:
-                Quantizer.dequantize_intX_to_fp32(
+                QuantizerForPureBits.dequantize_intX_to_fp32(
                     recv_quant_data_buf_list[rank], recv_buf[begin_idx:end_idx], scale, zero_point, num_bits
                 )
         dequantize_end = time.perf_counter()

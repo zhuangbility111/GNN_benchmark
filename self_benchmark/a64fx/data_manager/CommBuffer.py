@@ -10,8 +10,6 @@ class CommBuffer(object):
         if is_fp16:
             self.send_buf_fp16 = torch.zeros(size_send_buf, dtype=torch.bfloat16)
             self.recv_buf_fp16 = torch.zeros(size_recv_buf, dtype=torch.bfloat16)
-            # self.send_buf_fp16 = torch.zeros(size_send_buf, dtype=torch.uint8)
-            # self.recv_buf_fp16 = torch.zeros(size_recv_buf, dtype=torch.uint8)
 
     def resize_buffer(self, size_send_buf: tuple, size_recv_buf: tuple) -> None:
         # resize the fp32 message buffer

@@ -7,13 +7,8 @@ from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
 sys.path.append("../../")
 
 from communicator import Communicator
-from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer_v1
-
-import quantization_cpu
-import math
-
+from quantizer import QuantizerForMixedBits
 
 class Aggregator(torch.autograd.Function):
     @staticmethod
@@ -97,7 +92,7 @@ class Aggregator(torch.autograd.Function):
         convert_data_begin = time.perf_counter()
         # print("wait (ms): {}".format((convert_data_begin - async_wait_begin) * 1000.0))
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16 and is_training:
-            Quantizer_v1.dequantize_intX_to_fp32(
+            QuantizerForMixedBits.dequantize_intX_to_fp32(
                 quantized_recv_buf, recv_buf, dequantized_nodes_feat_range, dequantized_params
             )
 
@@ -210,7 +205,7 @@ class Aggregator(torch.autograd.Function):
 
         # convert communication data to fp32
         if world_size > 1 and num_recv_nodes != 0 and num_bits != 32 and num_bits != 16:
-            Quantizer_v1.dequantize_intX_to_fp32(
+            QuantizerForMixedBits.dequantize_intX_to_fp32(
                 quantized_recv_buf,
                 recv_buf,
                 dequantized_nodes_grad_range,
