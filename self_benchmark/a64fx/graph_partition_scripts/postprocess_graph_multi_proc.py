@@ -53,8 +53,8 @@ def load_node_ids(file_name: str) -> np.ndarray:
         file_name,
         sep=" ",
         header=None,
-        usecols=[0, 4],
-        # usecols=[0, 5],
+        # usecols=[0, 4],
+        usecols=[0, 5],
         dtype="int64",
     ).values
     return node_ids

@@ -4,6 +4,7 @@ import gc
 import torch
 import numpy as np
 from scipy.io import mmread
+import requests
 from ogb.nodeproppred import NodePropPredDataset
 from torch_geometric.datasets import Reddit
 
@@ -48,6 +49,9 @@ class Graph(object):
         """
         to save node features
         """
+        # if the out_dir does not exist, create it
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
         np.save(os.path.join(out_dir, "{}_nodes_feat.npy".format(graph_name)), self.node_feat)
         print("save node features successfully.")
         del self.node_feat
@@ -257,28 +261,55 @@ class DataLoader(object):
         to generate the node features, labels, training, validation and testing set for the graph which only has edge index
         """
         node_feat = torch.randn((num_nodes, feat_len), dtype=torch.float32).numpy()
-        train_idx = torch.zeros(num_nodes, dtype=torch.bool).numpy()
-        test_idx = torch.zeros(num_nodes, dtype=torch.bool).numpy()
-        valid_idx = torch.zeros(num_nodes, dtype=torch.bool).numpy()
+        train_idx = torch.zeros(num_nodes, dtype=torch.bool)
+        test_idx = torch.zeros(num_nodes, dtype=torch.bool)
+        valid_idx = torch.zeros(num_nodes, dtype=torch.bool)
         node_label = torch.zeros(num_nodes, dtype=torch.int64).numpy()
 
         train_idx[:train_set_size] = True
         test_idx[train_set_size : train_set_size + test_set_size] = True
         valid_idx[train_set_size + test_set_size : train_set_size + test_set_size + valid_set_size] = True
 
+        train_idx = train_idx.nonzero().squeeze().numpy()
+        test_idx = test_idx.nonzero().squeeze().numpy()
+        valid_idx = valid_idx.nonzero().squeeze().numpy()
+
         node_label[train_idx] = np.random.randint(0, num_labels, train_set_size)
 
         return (node_feat, node_label, train_idx, valid_idx, test_idx)
+    
+    @staticmethod
+    def download_proteins_dataset(raw_dir: str):
+        """
+        to download proteins dataset
+        """
+        print("Downloading dataset...")
+        print("This might a take while..")
+        url = "https://portal.nersc.gov/project/m1982/GNN/"
+        file_name = "subgraph3_iso_vs_iso_30_70length_ALL.m100.propermm.mtx"
+        url = url + file_name
+        try:
+            r = requests.get(url)
+        except:
+            print("Error: can't download Proteins dataset!! Aborting..")
+        
+        with open(os.path.join(raw_dir, "proteins.mtx"), "wb") as handle:
+            handle.write(r.content)
+        print("Downloaded Proteins dataset successfully.")
 
     @staticmethod
-    def load_proteins_dataset() -> Graph:
+    def load_proteins_dataset(raw_dir: str) -> Graph:
         """
-        to download and load proteins dataset, return the loaded graph and node labels
+        to load proteins dataset, return the loaded graph and node labels
         """
-        data = mmread("data/proteins/proteins.mtx")
+
+        if not os.path.exists(os.path.join(raw_dir, "proteins.mtx")):
+            DataLoader.download_proteins_dataset(raw_dir)
+
+        data = mmread(os.path.join(raw_dir, "proteins.mtx"))
         coo = data.tocoo()
         src_idx = torch.tensor(coo.row, dtype=torch.int64).numpy().reshape(-1)
-        dst_idx = torch.tensor(coo.colw, dtype=torch.int64).numpy().reshape(-1)
+        dst_idx = torch.tensor(coo.col, dtype=torch.int64).numpy().reshape(-1)
         edge_index = np.stack((src_idx, dst_idx), axis=0)
 
         num_nodes = 8745542
@@ -312,12 +343,11 @@ if __name__ == "__main__":
 
     # load graph
     if dataset[:4] == "ogbn":
-        graph_name = dataset[5:]
         graph = DataLoader.load_ogbn_dataset(dataset, raw_dir)
     elif dataset == "reddit":
         graph = DataLoader.load_reddit_dataset(raw_dir)
     elif dataset == "proteins":
-        graph = DataLoader.load_proteins_dataset()
+        graph = DataLoader.load_proteins_dataset(raw_dir)
     else:
         raise ValueError("Invalid dataset name")
 
