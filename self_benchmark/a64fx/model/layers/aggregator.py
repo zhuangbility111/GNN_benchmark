@@ -7,9 +7,8 @@ from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
 sys.path.append("../../")
 
 from communicator import Communicator
-from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import Quantizer, Quantizer_v1, Quantizer_for_all_procs
+from quantizer import QuantizerForMixedBits, Quantizer_for_all_procs
 from data_manager import DistributedGraph, DistributedGraphForPre
 from typing import Union
 
@@ -69,6 +68,9 @@ class Aggregator(torch.autograd.Function):
         # aggregate message from local nodes
         # out = SPMM_forward(graph.local_adj_t, local_nodes_feat, out)
         SPMM_forward(graph.local_adj_t, local_nodes_feat, out)
+        # out = SPMM_forward(graph.local_adj_t, local_nodes_feat, out)
+        local_aggregate_end = time.perf_counter()
+        TimeRecorder.ctx.record_local_aggregate_time(local_aggregate_end - local_aggregate_begin)
 
         async_wait_begin = time.perf_counter()
         print("rank:{}, spmm time (ms): {}".format(rank, (async_wait_begin - local_aggregate_begin) * 1000.0))
@@ -100,15 +102,16 @@ class Aggregator(torch.autograd.Function):
                 SPMM_forward(graph.adj_t_pre_post_aggr_from, remote_nodes_feat, out)
             else:
                 SPMM_forward(graph.remote_adj_t, remote_nodes_feat, out)
-
-        sum_message_end = time.perf_counter()
+                # out = SPMM_forward(graph.remote_adj_t, remote_nodes_feat, out)
+        
+        remote_aggregate_end = time.perf_counter()
+        TimeRecorder.ctx.record_remote_aggregate_time(remote_aggregate_end - remote_aggregate_begin)
 
         print("rank:{}, aggregate local nodes (ms): {}".format(rank, (remote_aggregate_begin - local_aggregate_begin) * 1000.0))
         TimeRecorder.print_time(
-            rank, "inner propagate forward (ms): ", (sum_message_end - prepare_comm_begin) * 1000.0
+            rank, "inner propagate forward (ms): ", (remote_aggregate_end - prepare_comm_begin) * 1000.0
         )
-        TimeRecorder.ctx.record_dequantization_time(convert_data_end - convert_data_begin)
-        TimeRecorder.ctx.record_total_convolution_time(sum_message_end - prepare_comm_begin)
+        TimeRecorder.ctx.record_total_convolution_time(remote_aggregate_end - prepare_comm_begin)
         TimeRecorder.ctx.next_layer()
         # print("inner propagate forward (ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
 
@@ -137,12 +140,15 @@ class Aggregator(torch.autograd.Function):
         # need to use the reverse buf for backward
         remote_nodes_grad_buf = graph.comm_buf.recv_buf
 
+        pre_aggregate_begin = time.perf_counter() 
         remote_nodes_grad_buf.zero_()
         if remote_nodes_grad_buf.size(0) != 0:
             if is_pre_delay:  # pre aggregation
                 SPMM_backward(graph.adj_t_pre_post_aggr_from, local_out_grad, remote_nodes_grad_buf)
             else:  # no pre aggregation
                 SPMM_backward(graph.remote_adj_t, local_out_grad, remote_nodes_grad_buf)
+        pre_aggregate_end = time.perf_counter()
+        TimeRecorder.ctx.record_pre_aggregate_time(pre_aggregate_end - pre_aggregate_begin)
 
         comm_handle = None
         # communicate to obtain the local node grads from other subgraph
@@ -156,11 +162,14 @@ class Aggregator(torch.autograd.Function):
                 "backward",
             )
 
+        local_aggregate_begin = time.perf_counter()
         # scatter gradient to local nodes
         local_nodes_grad = torch.zeros(
             [graph.local_adj_t.sparse_size(-1), local_out_grad.size(-1)], dtype=torch.float32
         )
         SPMM_backward(graph.local_adj_t, local_out_grad, local_nodes_grad)
+        local_aggregate_end = time.perf_counter()
+        TimeRecorder.ctx.record_local_aggregate_time(local_aggregate_end - local_aggregate_begin)
 
         if comm_handle is not None:
             comm_handle.wait()
@@ -187,6 +196,8 @@ class Aggregator(torch.autograd.Function):
                 local_nodes_grad.index_add_(
                     dim=0, index=graph.idx_nodes_send_to_others, source=local_nodes_grad_buf
                 )
+        remote_aggregate_end = time.perf_counter()
+        TimeRecorder.ctx.record_remote_aggregate_time(remote_aggregate_end - remote_aggregate_begin)
 
         backward_end = time.perf_counter()
         TimeRecorder.ctx.record_dequantization_time(dequantization_end - dequantization_begin)

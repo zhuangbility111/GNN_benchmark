@@ -1,4 +1,5 @@
-input_dir : "../../dataset/ogbn_papers100M_new/balanced_training_samples/"
+# input_dir : "../../dataset/ogbn_papers100M/balanced_training_samples/"
+input_dir : "../../dataset/ogbn_papers100M/balanced_out_degree/"
 graph_name : "papers100M"
 model_name : "sage"
 in_channels : 128

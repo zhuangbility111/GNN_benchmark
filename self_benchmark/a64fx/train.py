@@ -30,7 +30,8 @@ def collect_acc(model, data):
         predict_result.append(num_correct_samples)
         predict_result.append(num_samples)
     predict_result = torch.tensor(predict_result)
-    dist.all_reduce(predict_result, op=dist.ReduceOp.SUM)
+    if dist.get_world_size() > 1:
+        dist.all_reduce(predict_result, op=dist.ReduceOp.SUM)
 
     train_acc = float(predict_result[0] / predict_result[1])
     val_acc = float(predict_result[2] / predict_result[3])
@@ -39,7 +40,7 @@ def collect_acc(model, data):
     return train_acc, val_acc, test_acc
 
 
-def print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur):
+def print_forward_backward_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     total_forward_dur = torch.tensor([total_forward_dur])
@@ -71,10 +72,10 @@ def train(model, data, optimizer, num_epochs, num_bits):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     # start training
-    total_forward_dur = 0
-    total_backward_dur = 0
-    total_update_weight_dur = 0
-    total_training_dur = 0
+    total_forward_dur = 0.0
+    total_backward_dur = 0.0
+    total_update_weight_dur = 0.0
+    total_training_dur = 0.0
 
     # with profile(activities=[ProfilerActivity.CPU]) as prof:
     dist.barrier()
@@ -102,10 +103,10 @@ def train(model, data, optimizer, num_epochs, num_bits):
             print(
                 f"Rank: {rank}, World_size: {world_size}, Epoch: {epoch}, Loss: {loss}, Train: {train_acc:.4f}, Val: {val_acc:.4f}, Test: {test_acc:.4f}, Time: {(update_weight_end - forward_start):.6f}"
             )
+        TimeRecorder.ctx.record_total_training_time(update_weight_end - forward_start)
         TimeRecorder.ctx.next_epoch()
 
-    print_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
-
+    print_forward_backward_perf(total_forward_dur, total_backward_dur, total_update_weight_dur, total_training_dur)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -120,7 +121,7 @@ if __name__ == "__main__":
     config["num_bits"] = args.num_bits
     config["is_pre_delay"] = True if args.is_pre_delay == "true" else False
 
-    print(config, flush=True)
+    # print(config, flush=True)
 
     Communicator(config["num_bits"], config["is_async"])
     rank, world_size = Communicator.ctx.init_dist_group()
@@ -156,21 +157,5 @@ if __name__ == "__main__":
     # print("finish data loading.", flush=True)
     train(model, data, optimizer, config["num_epochs"], config["num_bits"])
 
-    # use mpi_reduce to get the average time of all mpi processes
-    total_barrier_time = torch.tensor([TimeRecorder.ctx.get_total_barrier_time()])
-    total_quantization_time = torch.tensor([TimeRecorder.ctx.get_total_quantization_time()])
-    total_communication_time = torch.tensor([TimeRecorder.ctx.get_total_communication_time()])
-    total_dequantization_time = torch.tensor([TimeRecorder.ctx.get_total_dequantization_time()])
-    total_convolution_time = torch.tensor([TimeRecorder.ctx.get_total_convolution_time()])
-    dist.reduce(total_barrier_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_quantization_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_communication_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_dequantization_time, 0, op=dist.ReduceOp.SUM)
-    dist.reduce(total_convolution_time, 0, op=dist.ReduceOp.SUM)
-
-    if rank == 0:
-        print("total_barrier_time(ms): {}".format(total_barrier_time[0] / float(world_size)))
-        print("total_quantization_time(ms): {}".format(total_quantization_time[0] / float(world_size)))
-        print("total_communication_time(ms): {}".format(total_communication_time[0] / float(world_size)))
-        print("total_dequantization_time(ms): {}".format(total_dequantization_time[0] / float(world_size)))
-        print("total_convolution_time(ms): {}".format(total_convolution_time[0] / float(world_size)))
+    TimeRecorder.ctx.print_total_time()
+    TimeRecorder.ctx.save_time_to_file(config["graph_name"], world_size)

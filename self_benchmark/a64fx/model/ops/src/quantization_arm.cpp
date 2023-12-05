@@ -6,6 +6,8 @@
 #include <vector>
 #include <list>
 
+#include "utils.h"
+
 #ifdef __ARM_FEATURE_SVE
 #include <arm_sve.h>
 #define VEC_LEN 16
@@ -14,26 +16,7 @@
 using torch::Tensor;
 using namespace std;
 
-inline int32_t divup(int32_t x, int32_t y)
-{
-    return (x + y - 1) / y;
-}
-
 #define QUANTIZED_PARAMS_SIZE 2
-
-void divide_work(int *work_range, int total_work, int num_threads)
-{
-    int chunk_size;
-    int remain_work = total_work;
-    work_range[0] = 0;
-    for (int i = 0; i < num_threads; i++)
-    {
-        chunk_size = divup(remain_work, num_threads - i);
-        work_range[i + 1] = work_range[i] + chunk_size;
-        remain_work -= chunk_size;
-    }
-    work_range[num_threads] = total_work;
-}
 
 void divide_work_v1(int *work_range_per_proc, vector<list<int>> &work_list_fp32, vector<list<int>> &work_list_int8, int num_threads, int num_procs)
 {
@@ -45,15 +28,6 @@ void divide_work_v1(int *work_range_per_proc, vector<list<int>> &work_list_fp32,
 
     int begin_vertex_idx_int8 = 0;
     int end_vertex_idx_int8 = divup(end_vertex_idx_fp32 - begin_vertex_idx_fp32, ELEMS_PER_BYTE);
-
-	/*
-    printf("work_range_per_proc = ");
-    for (int i = 0; i <= num_procs; i++)
-    {
-        printf("%d ", work_range_per_proc[i]);
-    }
-    printf("\n");
-	*/
 
     for (int i = 0; i < num_threads; i++)
     {

@@ -3,10 +3,11 @@ import math
 import torch
 from torch import Tensor
 import torch.distributed as dist
-import quantization_cpu
+import computation_ops
 from time_recorder import TimeRecorder
 
-class Quantizer(object):
+
+class QuantizerForPureBits(object):
     def __init__(self):
         pass
 
@@ -14,7 +15,7 @@ class Quantizer(object):
     def quantize_fp32_to_intX(data_fp32, data_intX, quant_params, num_bits=8):
         # total_quantize_begin = time.perf_counter()
         # inner_quantize_begin = time.perf_counter()
-        quantization_cpu.quantize_tensor(data_fp32, data_intX, quant_params, num_bits)
+        computation_ops.quantize_tensor(data_fp32, data_intX, quant_params, num_bits)
         # inner_quantize_end = time.perf_counter()
         # print(data_int8)
         # total_quantize_end = time.perf_counter()
@@ -39,26 +40,26 @@ class Quantizer(object):
     @staticmethod
     def dequantize_intX_to_fp32(data_intX, data_fp32, dequant_params, num_bits=8):
         # data_fp32.copy_((data_int8 - zero_point.view(-1, 1)) * scale.view(-1, 1))
-        quantization_cpu.dequantize_tensor(data_intX, data_fp32, dequant_params, num_bits)
+        computation_ops.dequantize_tensor(data_intX, data_fp32, dequant_params, num_bits)
 
     @staticmethod
     def get_quantized_buffer_size(num_comm_nodes, num_bits, feat_len):
         return math.ceil(num_comm_nodes / float(8 / num_bits)) * feat_len
 
 
-class Quantizer_v1(object):
+class QuantizerForMixedBits(object):
     @staticmethod
     def quantize_fp32_to_intX(data_fp32, data_int8, quantized_nodes_feat_range, quantized_params):
         # zero_points = torch.empty((data_fp32.size(0)), dtype=torch.float32)
         # scales = torch.empty((data_fp32.size(0)), dtype=torch.float32)
-        quantization_cpu.quantize_tensor_v1(
+        computation_ops.quantize_tensor_v1(
             data_fp32, data_int8, quantized_nodes_feat_range, quantized_params
         )
 
     @staticmethod
     def dequantize_intX_to_fp32(data_int8, data_fp32, quantized_nodes_feat_range, dequantized_params):
         dequantization_begin = time.perf_counter()
-        quantization_cpu.dequantize_tensor_v1(
+        computation_ops.dequantize_tensor_v1(
             data_int8, data_fp32, quantized_nodes_feat_range, dequantized_params
         )
         dequantization_end = time.perf_counter()
@@ -81,12 +82,12 @@ class Quantizer_for_all_procs(object):
         Quantizer_for_all_procs.ctx = self
 
     def quantize_fp32_to_intX(self, data_fp32, data_int8, quantized_params, quantized_work_range_per_proc):
-        quantization_cpu.quantize_tensor_for_all_procs(data_fp32, data_int8, quantized_params, 
+        computation_ops.quantize_tensor_for_all_procs(data_fp32, data_int8, quantized_params, 
                                                        quantized_work_range_per_proc, 
                                                        self.world_size, self.num_bits)
 
     def dequantize_intX_to_fp32(self, data_int8, data_fp32, quantized_params, dequantized_work_range_per_proc):
-        quantization_cpu.dequantize_tensor_for_all_procs(data_int8, data_fp32, quantized_params, 
+        computation_ops.dequantize_tensor_for_all_procs(data_int8, data_fp32, quantized_params, 
                                                          dequantized_work_range_per_proc, 
                                                          self.world_size, self.num_bits)
     

@@ -53,11 +53,8 @@ class DistSAGE(torch.nn.Module):
             relu_begin = time.perf_counter()
             nodes_feats = F.relu(nodes_feats)
             relu_end = time.perf_counter()
-            # total_conv_time += relu_begin - conv_begin
             total_conv_time = dropout_begin - conv_begin
-            # total_relu_time += dropout_begin - relu_begin
             total_relu_time = relu_end - relu_begin
-            # total_dropout_time += dropout_end - dropout_begin
             total_dropout_time = relu_begin - dropout_begin
             rank = dist.get_rank()
             if rank == 0:
@@ -69,5 +66,4 @@ class DistSAGE(torch.nn.Module):
 
         conv_begin = time.perf_counter()
         nodes_feats = self.convs[-1](graph, nodes_feats, len(self.convs) - 1)
-        # total_conv_time += time.perf_counter() - conv_begin
         return F.log_softmax(nodes_feats, dim=1)

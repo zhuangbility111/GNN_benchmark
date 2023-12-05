@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 import random
 import numpy as np
 from .DistSAGE import DistSAGE
@@ -19,8 +20,9 @@ def create_model_and_optimizer(config: dict):
         )
 
         model.reset_parameters()
-        # wrap model with ddp
-        model = torch.nn.parallel.DistributedDataParallel(model)
+        if dist.get_world_size() > 1:
+            # wrap model with ddp
+            model = torch.nn.parallel.DistributedDataParallel(model)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 
