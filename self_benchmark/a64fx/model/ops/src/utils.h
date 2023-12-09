@@ -118,6 +118,6 @@ uniform_choice(const int64_t population, const int64_t num_samples,
   }
 }
 
-inline int divup(int x, int y);
+int divup(int x, int y);
 
 void divide_work(int* work_range, int total_work, int num_threads);

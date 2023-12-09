@@ -187,6 +187,7 @@ class Aggregator(torch.autograd.Function):
                 )
         dequantization_end = time.perf_counter()
 
+        remote_aggregate_begin = time.perf_counter()
         local_nodes_grad_buf = graph.comm_buf.send_buf
         # then accumulate the local node grads
         if local_nodes_grad_buf.size(0) != 0:

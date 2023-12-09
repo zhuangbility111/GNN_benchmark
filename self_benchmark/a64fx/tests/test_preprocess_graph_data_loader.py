@@ -58,9 +58,6 @@ def test_generate_data_for_graph():
     assert test_idx is not None
     assert node_feat.shape == (num_nodes, feat_len)
     assert node_label.shape == (num_nodes,)
-    assert train_idx.shape == (num_nodes,)
-    assert valid_idx.shape == (num_nodes,)
-    assert test_idx.shape == (num_nodes,)
-    assert sum(train_idx) == train_set_size
-    assert sum(valid_idx) == valid_set_size
-    assert sum(test_idx) == test_set_size
+    assert train_idx.shape == (train_set_size,)
+    assert valid_idx.shape == (valid_set_size,)
+    assert test_idx.shape == (test_set_size,)

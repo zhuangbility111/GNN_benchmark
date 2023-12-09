@@ -59,7 +59,11 @@ def SPMM_forward(src: SparseTensor, other: torch.Tensor, out: torch.Tensor) -> t
         value = value.to(other.dtype)
     
     sparse_row = rowptr.shape[0] - 1
-    return spmm(rowptr, col, value, other, out, sparse_row, row_splits, col_splits)
+    # begin = time.perf_counter()
+    spmm(rowptr, col, value, other, out, sparse_row, row_splits, col_splits)
+    # end = time.perf_counter()
+    # print("time = {} ms".format((end - begin) * 1000.0))
+    return None
     # return spmm_sum_without_backward(rowptr, col, value, other, out, row_splits, col_splits)
     # return matmul(src, other)
 

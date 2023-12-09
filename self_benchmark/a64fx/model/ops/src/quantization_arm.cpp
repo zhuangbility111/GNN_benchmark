@@ -602,12 +602,3 @@ void dequantize_tensor_v1(Tensor input, Tensor output,
     }
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
-{
-    m.def("quantize_tensor", &quantize_tensor);
-    m.def("dequantize_tensor", &dequantize_tensor);
-    m.def("quantize_tensor_v1", &quantize_tensor_v1);
-    m.def("dequantize_tensor_v1", &dequantize_tensor_v1);
-    m.def("quantize_tensor_for_all_procs", &quantize_tensor_for_all_procs);
-    m.def("dequantize_tensor_for_all_procs", &dequantize_tensor_for_all_procs);
-}

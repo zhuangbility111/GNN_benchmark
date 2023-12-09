@@ -68,12 +68,12 @@ def distribute_work(rowptr: torch.Tensor, value: torch.Tensor, other: torch.Tens
     return row_splits, col_splits
     
 def test_spmm():
-    density = 0.007
+    density = 0.0007
     sparse_format = 'csr'
-    sparse_rows = 2002
-    sparse_cols = 102
+    sparse_rows = 20020
+    sparse_cols = 1020
     dense_rows = sparse_cols
-    dense_cols = 111
+    dense_cols = 128
     reduce = "sum"
 
     src = generate_sparse_tensor(sparse_rows, sparse_cols, density, sparse_format)

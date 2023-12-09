@@ -48,7 +48,7 @@ def check_cpu_support(extra_compile_args, extra_link_args, source_files):
 def get_extensions():
     extra_compile_args = ["-O3"]
     extra_link_args = []
-    source_files = ["src/spmm.cpp", "src/utils.cpp", "src/ops.cpp"]
+    source_files = ["src/utils.cpp", "src/spmm.cpp", "src/ops.cpp"]
     check_cpu_support(extra_compile_args, extra_link_args, source_files)
 
     extensions = []

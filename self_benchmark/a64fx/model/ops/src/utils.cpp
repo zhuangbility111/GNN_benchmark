@@ -1,6 +1,7 @@
 #include "utils.h"
 
-inline int divup(int x, int y) { return (x + y - 1) / y; }
+int divup(int x, int y) { return (x + y - 1) / y; }
+
 
 void divide_work(int* work_range, int total_work, int num_threads) {
     int chunk_size;

@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 from assigner import Assigner
 from time_recorder import TimeRecorder
-from quantizer import QuantizerForPureBits, QuantizerForMixedBits
+from quantizer import QuantizerForPureBits, QuantizerForMixedBits, Quantizer_for_all_procs
 from data_manager import CommBuffer, CommBufferForQuantization
 from data_manager import CommSplits
 
@@ -157,8 +157,8 @@ class Communicator(object):
 
         for rank in range(self.world_size):
             # prepare the quantized buffer for communication
-            int8_recv_buf_size = Quantizer.get_quantized_buffer_size(recv_splits[rank], self.num_bits, recv_buf.size(-1))
-            int8_send_buf_size = Quantizer.get_quantized_buffer_size(send_splits[rank], self.num_bits, send_buf.size(-1))
+            int8_recv_buf_size = QuantizerForPureBits.get_quantized_buffer_size(recv_splits[rank], self.num_bits, recv_buf.size(-1))
+            int8_send_buf_size = QuantizerForPureBits.get_quantized_buffer_size(send_splits[rank], self.num_bits, send_buf.size(-1))
 
             quantized_recv_splits.append(int8_recv_buf_size)
             quantized_send_splits.append(int8_send_buf_size)
