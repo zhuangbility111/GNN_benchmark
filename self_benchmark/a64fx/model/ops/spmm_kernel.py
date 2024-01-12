@@ -18,6 +18,7 @@ def distribute_work_for_row(rowptr: torch.Tensor, value: torch.Tensor, num_threa
     for i in range(flops_per_row.shape[0]):
         cur_flops_sum += flops_per_row[i]
         if cur_flops_sum > target_flops_on_rows and cur_tid < num_threads_on_row:
+            # row_splits[cur_tid+1] = i+1
             row_splits[cur_tid+1] = i
             cur_tid += 1
             cur_flops_sum = flops_per_row[i]
