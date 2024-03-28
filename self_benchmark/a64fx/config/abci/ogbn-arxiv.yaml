@@ -1,6 +1,6 @@
 # input_dir : "../dataset/ogbn_arxiv_new/balanced_training_samples/"
 input_dir : "../../dataset/ogbn_arxiv/balanced_out_degree/"
-graph_name : "arxiv"
+graph_name : "ogbn_arxiv"
 model_name : "sage"
 in_channels : 128
 hidden_channels : 256

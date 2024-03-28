@@ -2,7 +2,7 @@
 
 #$-l rt_F=64
 #$-cwd
-#$-l h_rt=06:00:00
+#$-l h_rt=02:00:00
 
 source ~/gcn.work/dgl_intel_setting_1/env_torch_1.10.0.sh
 source /etc/profile.d/modules.sh
@@ -18,6 +18,6 @@ NPP=2
 
 tcmalloc_path=/home/aaa10008ku/gcn.work/dgl_intel_setting_1/sub407/miniconda3/envs/torch-1.10/lib/libtcmalloc.so
 LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=32
-# LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=32 --is_pre_delay=true
-# LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=2
-# LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=2 --is_pre_delay=true
+LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=32 --is_pre_delay=true
+LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=2
+LD_PRELOAD=$tcmalloc_path:$LD_PRELOAD sh run_dist.sh -n $NP -ppn $NPP python ../../train.py --config=../../config/abci/ogbn-papers100M.yaml --num_bits=2 --is_pre_delay=true
